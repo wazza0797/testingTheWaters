@@ -1,0 +1,6 @@
+# Default configuration — shared across all modes (backtest/paper/live).
+# Secrets (API keys, tokens) NEVER go here — see .env.example and Settings.
+trading:
+  exchange: binance
+  symbol: BTC/USDT
+  timeframe: 1h

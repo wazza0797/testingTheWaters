@@ -1,0 +1,9 @@
+# Operational metrics/health server settings. Always merged in, regardless of
+# mode — observability is active in backtest, paper, and live alike.
+observability:
+  enabled: true
+  metrics_port: 9090
+  health_port: 8080
+  system_poll_interval_sec: 15
+  log_summary_interval_sec: 60
+  log_summary_enabled: true

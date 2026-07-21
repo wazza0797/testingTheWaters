@@ -1,0 +1,6 @@
+# Per-logger level overrides, applied on top of the global level (LOG_LEVEL
+# env var). Useful for quieting noisy third-party libraries without lowering
+# the global level. The global level/format switch lives in Settings
+# (LOG_LEVEL / LOG_FORMAT env vars), not here — see docs/architecture.md.
+loggers:
+  uvicorn.access: WARNING

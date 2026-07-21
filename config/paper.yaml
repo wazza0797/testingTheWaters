@@ -1,0 +1,7 @@
+# Paper-trading overlay — merged over default.yaml when running
+# `trading-platform paper`. Virtual cash, state paths, and feed poll interval
+# are populated here in Milestone 6.
+trading:
+  exchange: binance
+  symbol: BTC/USDT
+  timeframe: 1h

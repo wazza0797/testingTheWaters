@@ -1,0 +1,8 @@
+# Backtest fill-simulation parameters (Milestone 4). Merged over default.yaml
+# when running `trading-platform backtest`.
+backtest:
+  spread_bps: 5                    # override; null = use instrument default
+  latency_bars: 1
+  volume_participation_rate: 0.10  # max % of bar volume per partial fill
+  assume_maker_on_limit: true      # limit orders default to maker if non-crossing
+  use_next_bar_open: true          # fill price at next bar open (with latency)

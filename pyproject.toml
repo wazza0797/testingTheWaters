@@ -1,0 +1,87 @@
+[project]
+name = "trading-platform"
+version = "0.1.0"
+description = "Modular algorithmic trading platform — crypto-first, exchange-agnostic, backtest-to-live."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Wazza" }]
+
+dependencies = [
+    # M0 — foundation, event bus, config, observability
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "prometheus-client>=0.20",
+    "psutil>=6.0",
+    "python-dotenv>=1.0",
+    # M1+ — added when market data / backtesting / paper trading land:
+    #   pandas, pyarrow (M1 Parquet repository)
+    #   ccxt (M1 exchange adapter)
+    #   apscheduler (M6 paper trading loop)
+]
+
+[project.scripts]
+trading-platform = "trading_platform.main:app"
+
+[project.entry-points."trading_platform.strategies"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "types-pyyaml>=6.0",
+    "types-psutil>=6.0",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trading_platform"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "network: tests that require live network/exchange access (excluded by default)",
+]
+
+[tool.coverage.run]
+source = ["src/trading_platform"]
+branch = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+warn_unused_ignores = true
+warn_return_any = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["ccxt.*", "apscheduler.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trading_platform"]
