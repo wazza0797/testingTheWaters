@@ -28,7 +28,7 @@ class ParquetMarketDataRepository:
     writes are atomic (write-to-temp + rename) to avoid corrupt files on crash.
     """
 
-    def __init__(self, root: Path, exchange: str = "binance") -> None:
+    def __init__(self, root: Path, exchange: str) -> None:
         self._root = root
         self._exchange = exchange
 

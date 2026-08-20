@@ -40,7 +40,7 @@ class TestSaveAndLoadRoundTrip:
     def test_load_returns_bars_in_chronological_order(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bars = [
             make_bar(timestamp=datetime(2024, 1, 1, 2, tzinfo=UTC)),
             make_bar(timestamp=datetime(2024, 1, 1, 0, tzinfo=UTC)),
@@ -55,7 +55,7 @@ class TestSaveAndLoadRoundTrip:
     def test_re_saving_overlapping_bars_does_not_duplicate(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bar1 = make_bar(timestamp=datetime(2024, 1, 1, 0, tzinfo=UTC))
         bar2 = make_bar(timestamp=datetime(2024, 1, 1, 1, tzinfo=UTC))
 
@@ -68,7 +68,7 @@ class TestSaveAndLoadRoundTrip:
     def test_overwriting_a_timestamp_replaces_the_bar(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         ts = datetime(2024, 1, 1, tzinfo=UTC)
 
         repo.save_bars("BTC/USDT", "1h", [make_bar(timestamp=ts, close="100")])
@@ -81,7 +81,7 @@ class TestSaveAndLoadRoundTrip:
     def test_bars_spanning_multiple_months_are_partitioned_and_loaded_together(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bars = [
             make_bar(timestamp=datetime(2024, 1, 15, tzinfo=UTC)),
             make_bar(timestamp=datetime(2024, 2, 15, tzinfo=UTC)),
@@ -100,7 +100,7 @@ class TestSaveAndLoadRoundTrip:
     def test_start_end_filters_are_applied(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bars = [make_bar(timestamp=datetime(2024, 1, 1, hour, tzinfo=UTC)) for hour in range(5)]
         repo.save_bars("BTC/USDT", "1h", bars)
 
@@ -118,13 +118,13 @@ class TestSaveAndLoadRoundTrip:
 
 class TestLatestTimestamp:
     def test_returns_none_when_no_data(self, tmp_path: Path) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         assert repo.latest_timestamp("BTC/USDT", "1h") is None
 
     def test_returns_max_timestamp_across_partitions(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bars = [
             make_bar(timestamp=datetime(2024, 1, 15, tzinfo=UTC)),
             make_bar(timestamp=datetime(2024, 2, 20, tzinfo=UTC)),
@@ -136,14 +136,14 @@ class TestLatestTimestamp:
 
 class TestSaveBars:
     def test_empty_list_is_a_no_op(self, tmp_path: Path) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         repo.save_bars("BTC/USDT", "1h", [])
         assert not (tmp_path / "ohlcv").exists()
 
     def test_mismatched_symbol_raises_market_data_error(
         self, tmp_path: Path, make_bar: Callable[..., Bar]
     ) -> None:
-        repo = ParquetMarketDataRepository(tmp_path)
+        repo = ParquetMarketDataRepository(tmp_path, exchange="binance")
         bar = make_bar(symbol="ETH/USDT")
 
         with pytest.raises(MarketDataError):
