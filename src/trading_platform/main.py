@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import time
+from datetime import timedelta
 
 import typer
 import uvicorn
@@ -13,8 +14,10 @@ from trading_platform import __version__
 from trading_platform.config.loader import load_config
 from trading_platform.config.settings import Settings
 from trading_platform.container import AppContainer, build_container
+from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.utils.logging import configure_logging
+from trading_platform.utils.time import utc_now
 
 _HEARTBEAT_INTERVAL_SECONDS = 10.0
 
@@ -116,10 +119,44 @@ def serve(
 
 
 @app.command(name="download-data")
-def download_data() -> None:
-    """Download historical OHLCV data. Implemented in Milestone 1."""
-    typer.echo("Not yet implemented — see Milestone 1 (Historical Data Download).")
-    raise typer.Exit(code=1)
+def download_data(
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="e.g. BTC/USDT (default: config trading.symbol)"
+    ),
+    timeframe: str | None = typer.Option(
+        None, "--timeframe", help="e.g. 1h (default: config trading.timeframe)"
+    ),
+    days: int = typer.Option(365, "--days", help="Days of history to backfill from today."),
+) -> None:
+    """Download historical OHLCV bars and cache instrument rules (Milestone 1)."""
+    container = _bootstrap()
+    resolved_symbol = symbol or container.config.trading.symbol
+    resolved_timeframe = timeframe or container.config.trading.timeframe
+    exchange_name = container.exchange_adapter.exchange_name
+
+    try:
+        rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
+        if rules is None:
+            typer.echo(f"Fetching instrument rules for {resolved_symbol} from {exchange_name}...")
+            rules = container.exchange_adapter.fetch_instrument_rules(resolved_symbol)
+            container.instrument_rules_cache.save(rules)
+        typer.echo(
+            f"Instrument rules: tick_size={rules.tick_size} step_size={rules.step_size} "
+            f"min_qty={rules.min_qty} min_notional={rules.min_notional} "
+            f"maker_fee={rules.maker_fee_rate} taker_fee={rules.taker_fee_rate}"
+        )
+
+        since = utc_now() - timedelta(days=days)
+        typer.echo(
+            f"Downloading {resolved_symbol}@{resolved_timeframe} since {since.isoformat()}..."
+        )
+        new_bars = container.data_ingest_service.sync(resolved_symbol, resolved_timeframe, since)
+        typer.echo(
+            f"Done. {new_bars} new bar(s) persisted for {resolved_symbol}@{resolved_timeframe}."
+        )
+    except TradingPlatformError as exc:
+        typer.echo(f"Download failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

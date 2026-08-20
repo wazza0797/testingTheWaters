@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -12,9 +13,15 @@ from trading_platform.domain.events.risk import OrderApproved, RiskRejected
 from trading_platform.domain.events.strategy import SignalGenerated
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.ports.event_bus import IEventBus
+from trading_platform.domain.ports.exchange import IExchangeAdapter
+from trading_platform.domain.ports.market_data import IMarketDataRepository
+from trading_platform.exchanges.binance.adapter import BinanceAdapter
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.infrastructure.event_bus.timed import TimedEventBus
 from trading_platform.infrastructure.metrics.prometheus import PrometheusMetricsCollector
+from trading_platform.market_data.ingest import DataIngestService
+from trading_platform.market_data.instrument_rules_cache import InstrumentRulesCache
+from trading_platform.market_data.repository.parquet import ParquetMarketDataRepository
 from trading_platform.observability.handler import MetricsHandler
 from trading_platform.observability.server import HealthStatus, create_app
 from trading_platform.observability.summary import (
@@ -58,6 +65,10 @@ class AppContainer:
     system_monitor: SystemMonitor
     summary_logger: PeriodicSummaryLogger
     health: HealthStatus
+    exchange_adapter: IExchangeAdapter
+    market_data_repository: IMarketDataRepository
+    instrument_rules_cache: InstrumentRulesCache
+    data_ingest_service: DataIngestService
 
     def observability_app(self) -> FastAPI:
         return create_app(self.prometheus_collector, self.health)
@@ -80,6 +91,12 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     )
     health = HealthStatus()
 
+    data_dir = Path(settings.data_dir)
+    exchange_adapter = BinanceAdapter()
+    market_data_repository = ParquetMarketDataRepository(data_dir, exchange=config.trading.exchange)
+    instrument_rules_cache = InstrumentRulesCache(data_dir)
+    data_ingest_service = DataIngestService(exchange_adapter, market_data_repository, event_bus)
+
     return AppContainer(
         settings=settings,
         config=config,
@@ -88,4 +105,8 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
         system_monitor=system_monitor,
         summary_logger=summary_logger,
         health=health,
+        exchange_adapter=exchange_adapter,
+        market_data_repository=market_data_repository,
+        instrument_rules_cache=instrument_rules_cache,
+        data_ingest_service=data_ingest_service,
     )

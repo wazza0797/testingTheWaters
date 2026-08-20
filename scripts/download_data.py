@@ -8,7 +8,9 @@ console-script entry point to be installed. Implemented in Milestone 1.
 
 from __future__ import annotations
 
+import sys
+
 from trading_platform.main import app
 
 if __name__ == "__main__":
-    app(["download-data"])
+    app(["download-data", *sys.argv[1:]])

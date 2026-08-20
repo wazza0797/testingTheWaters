@@ -18,9 +18,11 @@ dependencies = [
     "prometheus-client>=0.20",
     "psutil>=6.0",
     "python-dotenv>=1.0",
-    # M1+ — added when market data / backtesting / paper trading land:
-    #   pandas, pyarrow (M1 Parquet repository)
-    #   ccxt (M1 exchange adapter)
+    # M1 — historical data download
+    "ccxt>=4.3",
+    "pyarrow>=16.0",
+    # M2+ — added when needed:
+    #   pandas (M2 indicator engine)
     #   apscheduler (M6 paper trading loop)
 ]
 
@@ -71,7 +73,7 @@ warn_return_any = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["ccxt.*", "apscheduler.*"]
+module = ["ccxt.*", "apscheduler.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
