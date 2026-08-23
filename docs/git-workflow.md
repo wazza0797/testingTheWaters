@@ -45,6 +45,29 @@ uv run pytest -m "not network"
 - No secrets, API keys, or tokens in code, config, or commit messages.
 - Squash merge to `main` — keep `main`'s history one commit per PR.
 
+## Review: Automated, Not Manual
+
+This is a solo project — line-by-line human review of every PR isn't
+realistic, and requiring it as a gate anyway would just be ceremony with no
+actual safety benefit. Automated review fills that gap instead, on every PR:
+
+- **Bugbot reviews every PR before merge.** Its full findings table (every
+  finding, its own severity, file:line) is always shown in full — never
+  filtered or paraphrased down to "the important ones" by whoever opened the
+  PR. Nobody gets to unilaterally decide a finding doesn't matter.
+- **Bugbot's own severity decides what blocks the merge, not a human
+  relabeling it.** Only its lowest ("nit"/style) tier may be resolved without
+  waiting for a decision; everything above that blocks merge until fixed or
+  explicitly waived with a stated reason. Ambiguous severity defaults to
+  blocking, not passing.
+- **`security-review` also runs on any PR touching money-handling logic** —
+  order execution, fill simulation, precision/rounding, risk checks (from
+  Milestone 4 onward). It's a distinct lens from Bugbot and catches a
+  different class of issue.
+- Bugbot/security-review findings and how they were resolved are worth a
+  one-line mention in the PR description or milestone doc — a lightweight
+  audit trail, not a transcript.
+
 ## Tags
 
 Tag milestone completions on `main`: `v0.1.0-m0`, `v0.2.0-m1`, `v0.3.0-m2`, etc.
