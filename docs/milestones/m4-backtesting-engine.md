@@ -142,6 +142,44 @@ Two structural gaps were also closed while wiring the event chain together:
   attribute on the implementer, which a frozen dataclass deliberately never
   has) — surfaced only once `container.py` actually constructed one.
 
+## Addendum: Bugbot Findings, Fixed During Review
+
+Bugbot review of the PR caught two real bugs before merge:
+
+1. **(High) Risk ignored pending queued orders.** `PassThroughRiskEngine`
+   decided BUY/SELL approval using only `BacktestLedger.position_for` —
+   which reflects *filled* fills only. With `latency_bars >= 2`, repeated
+   signals, or partial fills, a second BUY could be approved while an
+   earlier BUY for the same symbol was still queued (not yet filled),
+   violating the documented long-only/no-pyramiding policy; symmetrically, a
+   SELL could be approved while a BUY was still partially filling, or two
+   SELLs approved against the same holdings. **Fix:** added
+   `IPendingOrderTracker` (`domain/ports/risk.py`) — `has_pending_order(symbol)`
+   — implemented by `OrderQueue`/`SimBroker` (which already track exactly
+   this) and injected into `PassThroughRiskEngine`, which now rejects *any*
+   signal for a symbol while an order for it is still outstanding. Closes
+   the gap for both directions with one check; regression tests in
+   `tests/unit/risk/test_engine.py::TestPendingOrderGate`,
+   `tests/unit/backtesting/test_order_queue.py::TestHasPendingOrder`, and
+   `tests/unit/backtesting/test_broker_sim.py::TestHasPendingOrder`.
+2. **(Medium) Partial fills ignored step size.** `FillSimulator` passed
+   `PartialFillModel.fillable_quantity`'s volume-derived quantity straight
+   through as `filled_qty`, unlike `EquityFractionSizer` (which always
+   rounds to `step_size`). A volume-derived partial quantity could therefore
+   violate the instrument's lot-size rule, or fall below `min_qty` in a way
+   the `OrderValidator` would have rejected had it been submitted as a
+   standalone order. **Fix:** `FillSimulator.simulate_fill` now rounds the
+   partial-fill quantity down to `step_size` via `execution/precision.py::round_qty`,
+   returning `None` (no fill this bar) if it rounds to zero — consistent
+   with the existing "meaningless zero fill -> no fill" behavior. Regression
+   tests in `tests/unit/backtesting/test_fill_simulator.py`.
+
+Also caught and cleared by the paired Security Review: no medium+ issues
+(safe YAML loading, no `eval`/`exec`/`pickle`, `Decimal` arithmetic
+throughout, no secrets in new logging). It flagged the `BacktestLedger`
+cash-sufficiency gap (already documented above) as backtest-fidelity debt
+for a future milestone, not a vulnerability in this one.
+
 ## Verification
 
 Ran an end-to-end smoke test with real downloaded BTC/USDT data (not just
@@ -165,7 +203,7 @@ CLI wiring, not just the individual units, works.
 | Trade log + equity curve produced | ✅ | `BacktestResult.fills`/`.equity_curve` — `tests/unit/backtesting/test_engine.py` |
 | CLI runs a full backtest | ✅ | `trading-platform backtest` — smoke-tested against real downloaded data (see Verification); `tests/integration/test_backtest_engine_integration.py` runs the real container + real `SmaCrossoverStrategy` config through a synthetic golden-cross/death-cross series with zero network access |
 | Every module unit tested | ✅ | New/changed modules: `risk/sizing.py`, `risk/engine.py`, `risk/handler.py`, `execution/order_validator.py`, `execution/handler.py`, `backtesting/ledger.py`, `backtesting/models/*.py`, `backtesting/order_queue.py`, `backtesting/fill_simulator.py`, `backtesting/broker_sim.py`, `backtesting/engine.py`, `application/trading_loop.py` — all with dedicated `tests/unit/.../test_*.py` files |
-| `uv run pytest -m "not network"` passes | ✅ | 395 passed |
+| `uv run pytest -m "not network"` passes | ✅ | 410 passed (see Bugbot addendum below for the +15 added during review) |
 | `uv run mypy src` / `ruff check .` / `ruff format --check .` | ✅ | all clean |
 
 ## Known Gaps (by design — later milestones)

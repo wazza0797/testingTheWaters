@@ -185,7 +185,7 @@ def build_backtest_engine(
     )
 
     sizer = EquityFractionSizer(backtest_config.position_size_pct)
-    risk_engine = PassThroughRiskEngine(ledger, rules_by_symbol, sizer)
+    risk_engine = PassThroughRiskEngine(ledger, rules_by_symbol, sizer, broker)
     risk_handler = RiskHandler(risk_engine, container.event_bus)
 
     execution_handler = ExecutionHandler(broker, rules_by_symbol, container.event_bus)

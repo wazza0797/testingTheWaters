@@ -70,6 +70,15 @@ class OrderQueue:
                 break
         self._orders = [q for q in self._orders if q.remaining_qty > 0]
 
+    def has_pending_order(self, symbol: str) -> bool:
+        """Whether any order for `symbol` is still being worked — waiting out
+        latency or only partially filled. Backs `IPendingOrderTracker` (via
+        `SimBroker.has_pending_order`) so `PassThroughRiskEngine` can avoid
+        approving a second order for a symbol while an earlier one hasn't
+        resolved yet.
+        """
+        return any(queued.order.symbol == symbol for queued in self._orders)
+
     @property
     def pending_count(self) -> int:
         """Orders still waiting out their latency (not yet eligible to fill)."""

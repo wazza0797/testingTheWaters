@@ -9,6 +9,7 @@ from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.fill import Fill
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.models.order import Order, OrderSide, OrderType
+from trading_platform.execution.precision import round_qty
 
 
 class FillSimulator:
@@ -53,7 +54,16 @@ class FillSimulator:
                 order.side, order.price, reference_price
             )
 
-        filled_qty = self._partial_fill_model.fillable_quantity(bar.volume, remaining_qty)
+        # Round down to the instrument's step size: `PartialFillModel` caps by
+        # raw bar volume, with no notion of lot-size granularity, so a
+        # volume-derived quantity can otherwise land between steps (or below
+        # `min_qty`) in a way a real exchange would never accept. Rounding
+        # down is always safe here — it only ever shrinks this fill, leaving
+        # the (now slightly larger) remainder to be re-offered on a later
+        # bar via `OrderQueue`, same as any other partial fill.
+        filled_qty = round_qty(
+            self._partial_fill_model.fillable_quantity(bar.volume, remaining_qty), rules
+        )
         if filled_qty <= 0:
             return None
 

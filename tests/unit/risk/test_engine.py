@@ -30,6 +30,18 @@ class StubPortfolio:
         return self._equity
 
 
+class StubPendingOrderTracker:
+    """Minimal `IPendingOrderTracker` test double — a fixed, symbol-agnostic
+    answer unless a specific symbol is marked pending.
+    """
+
+    def __init__(self, pending_symbols: frozenset[str] = frozenset()) -> None:
+        self._pending_symbols = pending_symbols
+
+    def has_pending_order(self, symbol: str) -> bool:
+        return symbol in self._pending_symbols
+
+
 def _signal(signal_type: SignalType, symbol: str = "BTC/USDT") -> Signal:
     return Signal(
         symbol=symbol, signal_type=signal_type, strategy_name="test-strategy", timestamp=UTC_TS
@@ -41,11 +53,13 @@ def _engine(
     position: Position | None = None,
     rules: InstrumentRules | None = None,
     fraction: float = 1.0,
+    pending_symbols: frozenset[str] = frozenset(),
 ) -> PassThroughRiskEngine:
     return PassThroughRiskEngine(
         portfolio=StubPortfolio(equity, position),
         instrument_rules={"BTC/USDT": rules} if rules else {},
         sizer=EquityFractionSizer(fraction),
+        pending_orders=StubPendingOrderTracker(pending_symbols),
     )
 
 
@@ -154,6 +168,67 @@ class TestSellAndCloseSignals:
         assert decision.order is not None
         assert decision.order.side == OrderSide.SELL
         assert decision.order.quantity == Decimal("0.2")
+
+
+class TestPendingOrderGate:
+    """Regression tests for a real bug caught in review: `position_for`
+    alone only reflects *filled* fills, so without also consulting
+    `IPendingOrderTracker`, a second signal could be approved while an
+    earlier order for the same symbol is still outstanding (queued on
+    latency, or only partially filled) — breaking the "no averaging/
+    pyramiding, no double-close" policy this engine otherwise enforces.
+    """
+
+    def test_rejects_a_buy_while_flat_if_an_order_is_already_pending(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        # Flat per the ledger (no filled position yet), but an earlier BUY
+        # for this symbol is still working its way through latency/partial
+        # fills — approving a second one here would double the eventual
+        # position once both land.
+        engine = _engine(rules=btc_usdt_instrument_rules, pending_symbols=frozenset({"BTC/USDT"}))
+
+        decision = engine.evaluate(_signal(SignalType.BUY), make_bar())
+
+        assert not decision.approved
+        assert "already pending" in (decision.rejection_reason or "")
+
+    def test_rejects_a_sell_while_holding_if_an_order_is_already_pending(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        position = Position(
+            symbol="BTC/USDT", quantity=Decimal("0.2"), average_entry_price=Decimal("50000")
+        )
+        engine = _engine(
+            position=position,
+            rules=btc_usdt_instrument_rules,
+            pending_symbols=frozenset({"BTC/USDT"}),
+        )
+
+        decision = engine.evaluate(_signal(SignalType.SELL), make_bar())
+
+        assert not decision.approved
+        assert "already pending" in (decision.rejection_reason or "")
+
+    def test_a_pending_order_for_a_different_symbol_does_not_block_this_one(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        engine = _engine(rules=btc_usdt_instrument_rules, pending_symbols=frozenset({"ETH/USDT"}))
+        bar = make_bar(close="50000", open_="50000", high="50000", low="50000")
+
+        decision = engine.evaluate(_signal(SignalType.BUY), bar)
+
+        assert decision.approved
+
+    def test_approves_normally_once_the_pending_order_clears(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        engine = _engine(rules=btc_usdt_instrument_rules, pending_symbols=frozenset())
+        bar = make_bar(close="50000", open_="50000", high="50000", low="50000")
+
+        decision = engine.evaluate(_signal(SignalType.BUY), bar)
+
+        assert decision.approved
 
 
 class TestOrderConstructionDetails:

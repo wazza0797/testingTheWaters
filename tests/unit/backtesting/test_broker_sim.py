@@ -61,6 +61,39 @@ class TestSubmitOrder:
         assert fills == []
 
 
+class TestHasPendingOrder:
+    """Regression coverage for `IPendingOrderTracker`: `PassThroughRiskEngine`
+    relies on this to avoid approving a second order for a symbol while an
+    earlier one is still outstanding (queued or partially filled).
+    """
+
+    def test_false_before_any_order_is_submitted(
+        self, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        broker = _broker(rules=btc_usdt_instrument_rules)
+
+        assert broker.has_pending_order("BTC/USDT") is False
+
+    def test_true_immediately_after_submission_even_before_any_process_bar_call(
+        self, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        broker = _broker(rules=btc_usdt_instrument_rules)
+
+        broker.submit_order(_order())
+
+        assert broker.has_pending_order("BTC/USDT") is True
+
+    def test_false_again_once_the_order_fully_fills(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        broker = _broker(latency_bars=0, rules=btc_usdt_instrument_rules)
+        broker.submit_order(_order(quantity=Decimal("0.1")))
+
+        broker.process_bar(make_bar(open_="50000", high="50100", low="49900", close="50050"))
+
+        assert broker.has_pending_order("BTC/USDT") is False
+
+
 class TestProcessBar:
     def test_default_latency_of_one_bar_fills_on_the_next_bar_after_submission(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules

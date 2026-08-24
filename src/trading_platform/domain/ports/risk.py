@@ -41,3 +41,22 @@ class IRiskEngine(Protocol):
     """
 
     def evaluate(self, signal: Signal, bar: Bar) -> RiskDecision: ...
+
+
+class IPendingOrderTracker(Protocol):
+    """Whether a symbol currently has an order submitted but not yet fully
+    resolved (filled or rejected) — i.e. already approved and still working
+    somewhere between Risk and a terminal outcome.
+
+    `PassThroughRiskEngine` needs this because `IPortfolioView.position_for`
+    only reflects *filled* fills — it says nothing about an order that was
+    already approved and is still sitting in latency, or only partially
+    filled. Without this check, a second signal for the same symbol could
+    be approved while an earlier order for it is still outstanding,
+    breaking the long-only "no averaging/pyramiding, no double-close"
+    policy `PassThroughRiskEngine` otherwise enforces (see its docstring).
+    `backtesting.broker_sim.SimBroker` is the first implementation, backed
+    by its internal `OrderQueue`.
+    """
+
+    def has_pending_order(self, symbol: str) -> bool: ...

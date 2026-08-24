@@ -10,11 +10,13 @@ from trading_platform.domain.models.order import Order, OrderSide, OrderType
 UTC_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
-def _order(order_id: str = "o1", quantity: Decimal = Decimal("1")) -> Order:
+def _order(
+    order_id: str = "o1", quantity: Decimal = Decimal("1"), symbol: str = "BTC/USDT"
+) -> Order:
     return Order(
         order_id=order_id,
         correlation_id="c1",
-        symbol="BTC/USDT",
+        symbol=symbol,
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         quantity=quantity,
@@ -110,6 +112,41 @@ class TestPartialFillTracking:
         ready = queue.advance()
 
         assert [q.remaining_qty for q in ready] == [Decimal("7")]
+
+
+class TestHasPendingOrder:
+    def test_false_when_the_queue_is_empty(self) -> None:
+        queue = OrderQueue(latency_model=LatencyModel(latency_bars=1))
+
+        assert queue.has_pending_order("BTC/USDT") is False
+
+    def test_true_while_an_order_is_waiting_out_latency(self) -> None:
+        queue = OrderQueue(latency_model=LatencyModel(latency_bars=2))
+        queue.enqueue(_order(symbol="BTC/USDT"))
+
+        assert queue.has_pending_order("BTC/USDT") is True
+
+    def test_true_while_an_order_is_active_but_only_partially_filled(self) -> None:
+        queue = OrderQueue(latency_model=LatencyModel(latency_bars=1))
+        queue.enqueue(_order(symbol="BTC/USDT", quantity=Decimal("10")))
+        queue.advance()
+        queue.record_fill("o1", Decimal("4"))
+
+        assert queue.has_pending_order("BTC/USDT") is True
+
+    def test_false_once_the_order_is_fully_filled(self) -> None:
+        queue = OrderQueue(latency_model=LatencyModel(latency_bars=1))
+        queue.enqueue(_order(symbol="BTC/USDT", quantity=Decimal("10")))
+        queue.advance()
+        queue.record_fill("o1", Decimal("10"))
+
+        assert queue.has_pending_order("BTC/USDT") is False
+
+    def test_false_for_a_different_symbol(self) -> None:
+        queue = OrderQueue(latency_model=LatencyModel(latency_bars=1))
+        queue.enqueue(_order(symbol="ETH/USDT"))
+
+        assert queue.has_pending_order("BTC/USDT") is False
 
 
 class TestMultipleOrders:

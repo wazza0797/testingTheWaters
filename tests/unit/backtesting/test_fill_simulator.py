@@ -124,6 +124,39 @@ class TestMarketOrderFills:
 
         assert fill is None
 
+    def test_volume_derived_partial_fill_is_rounded_down_to_step_size(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        # Regression: PartialFillModel caps by raw bar volume with no notion
+        # of lot-size granularity -- 10% of a volume=1.234567 bar is
+        # 0.1234567, which is not a multiple of
+        # btc_usdt_instrument_rules.step_size=0.00001, so it must be rounded
+        # down to 0.12345 rather than passed through as-is.
+        simulator = _simulator(spread_bps=0, volume_participation_rate=0.10)
+        bar = make_bar(open_="50000", high="50100", low="49900", close="50050", volume="1.234567")
+
+        fill = simulator.simulate_fill(
+            _market_order(quantity=Decimal("5")), Decimal("5"), bar, btc_usdt_instrument_rules
+        )
+
+        assert fill is not None
+        assert fill.filled_qty == Decimal("0.12345")
+
+    def test_returns_none_when_the_rounded_partial_fill_quantity_is_zero(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        # A volume-derived quantity smaller than one step_size (0.00001)
+        # rounds down to zero -- must be treated the same as "doesn't fill
+        # at all this bar", not surfaced as a zero-quantity Fill.
+        simulator = _simulator(spread_bps=0, volume_participation_rate=1.0)
+        bar = make_bar(open_="50000", high="50100", low="49900", close="50050", volume="0.000005")
+
+        fill = simulator.simulate_fill(
+            _market_order(quantity=Decimal("5")), Decimal("5"), bar, btc_usdt_instrument_rules
+        )
+
+        assert fill is None
+
 
 class TestLimitOrderFills:
     def test_buy_limit_fills_at_limit_price_when_bar_low_reaches_it(

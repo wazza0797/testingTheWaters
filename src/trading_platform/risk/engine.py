@@ -10,7 +10,7 @@ from trading_platform.domain.models.order import Order, OrderSide, OrderType
 from trading_platform.domain.models.position import Position
 from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.domain.ports.portfolio import IPortfolioView
-from trading_platform.domain.ports.risk import RiskDecision
+from trading_platform.domain.ports.risk import IPendingOrderTracker, RiskDecision
 from trading_platform.risk.sizing import EquityFractionSizer
 
 # Placeholder, always overwritten by RiskHandler with the triggering event's
@@ -34,6 +34,13 @@ class PassThroughRiskEngine:
       own — see `SignalGenerated.bar`).
     - `SELL`/`CLOSE` while holding a position: closes the *entire* position
       (no partial-reduce policy exists yet).
+    - **Any** signal while an earlier order for the same symbol is still
+      outstanding (queued on latency, or only partially filled): rejected.
+      `IPortfolioView.position_for` only reflects *filled* fills, so without
+      this check a second `BUY` could be approved before the first one's
+      fill ever lands in the ledger (violating "never averages in"), or a
+      `SELL` could be approved while a `BUY` is still partially filling. See
+      `IPendingOrderTracker`.
 
     Rejections here are trading-policy-level (`RiskRejected`) and distinct
     from `execution/order_validator.py`'s exchange-rule-level rejections
@@ -47,16 +54,27 @@ class PassThroughRiskEngine:
         portfolio: IPortfolioView,
         instrument_rules: Mapping[str, InstrumentRules],
         sizer: EquityFractionSizer,
+        pending_orders: IPendingOrderTracker,
     ) -> None:
         self._portfolio = portfolio
         self._instrument_rules = instrument_rules
         self._sizer = sizer
+        self._pending_orders = pending_orders
 
     def evaluate(self, signal: Signal, bar: Bar) -> RiskDecision:
         rules = self._instrument_rules.get(signal.symbol)
         if rules is None:
             return RiskDecision(
                 order=None, rejection_reason=f"no instrument rules for {signal.symbol!r}"
+            )
+
+        if self._pending_orders.has_pending_order(signal.symbol):
+            return RiskDecision(
+                order=None,
+                rejection_reason=(
+                    f"an order for {signal.symbol} is already pending "
+                    f"(not yet filled/rejected); ignoring {signal.signal_type.value} signal"
+                ),
             )
 
         position = self._portfolio.position_for(signal.symbol)

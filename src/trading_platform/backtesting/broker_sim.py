@@ -38,6 +38,13 @@ class SimBroker:
         self._order_queue.enqueue(order)
         return []
 
+    def has_pending_order(self, symbol: str) -> bool:
+        """Implements `IPendingOrderTracker` for `PassThroughRiskEngine` —
+        delegates to the underlying `OrderQueue`, which is the actual source
+        of truth for "still working, not yet resolved" orders.
+        """
+        return self._order_queue.has_pending_order(symbol)
+
     def process_bar(self, bar: Bar) -> list[tuple[Order, Fill]]:
         """Advance the order queue's latency and attempt a fill for every
         order now eligible, using `bar`'s OHLCV data. Returns `(order, fill)`
