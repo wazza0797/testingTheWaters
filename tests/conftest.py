@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from trading_platform.domain.events.base import Event
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 
@@ -78,6 +79,31 @@ def make_bar() -> Callable[..., Bar]:
         )
 
     return _make_bar
+
+
+class FakeEventBus:
+    """In-memory `IEventBus` for unit tests: records every published event,
+    raises on `subscribe`/`unsubscribe` since no test in this codebase drives
+    a handler chain through it (they call `handler.handle(...)` directly and
+    assert against `.published`).
+    """
+
+    def __init__(self) -> None:
+        self.published: list[Event] = []
+
+    def subscribe(self, event_type: type[Event], handler: object) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def unsubscribe(self, event_type: type[Event], handler: object) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def publish(self, event: Event) -> None:
+        self.published.append(event)
+
+
+@pytest.fixture
+def fake_event_bus() -> FakeEventBus:
+    return FakeEventBus()
 
 
 @pytest.fixture

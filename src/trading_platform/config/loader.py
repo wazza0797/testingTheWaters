@@ -17,6 +17,18 @@ class TradingConfig(BaseModel):
     timeframe: str = "1h"
 
 
+class StrategyConfig(BaseModel):
+    """Config-driven strategy selection for `StrategyLoader`.
+
+    `path` is a `"module:ClassName"` string (see
+    `strategies/loader.py::load_strategy_class`); `None` until a milestone
+    actually wires a strategy into a running loop (M4 backtest engine).
+    """
+
+    path: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class BacktestConfig(BaseModel):
     spread_bps: float | None = None
     latency_bars: int = 1
@@ -40,6 +52,7 @@ class AppConfig(BaseModel):
     """
 
     trading: TradingConfig = Field(default_factory=TradingConfig)
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 

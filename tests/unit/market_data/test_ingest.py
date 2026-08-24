@@ -7,7 +7,6 @@ from decimal import Decimal
 import pytest
 
 from trading_platform.domain.errors import MarketDataError
-from trading_platform.domain.events.base import Event
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.models.bar import Bar
 from trading_platform.market_data.ingest import DataIngestService
@@ -63,20 +62,6 @@ class FakeRepository:
         return max(bucket) if bucket else None
 
 
-class FakeEventBus:
-    def __init__(self) -> None:
-        self.published: list[Event] = []
-
-    def subscribe(self, event_type, handler) -> None:  # pragma: no cover - unused
-        raise NotImplementedError
-
-    def unsubscribe(self, event_type, handler) -> None:  # pragma: no cover - unused
-        raise NotImplementedError
-
-    def publish(self, event: Event) -> None:
-        self.published.append(event)
-
-
 def _make_bars(
     count: int, start: datetime, step: timedelta, make_bar: Callable[..., Bar]
 ) -> list[Bar]:
@@ -110,18 +95,17 @@ class TestSync:
         assert len(list(repository.load_bars("BTC/USDT", "1h"))) == 5
 
     def test_publishes_bar_closed_with_ingest_mode_for_each_new_bar(
-        self, make_bar: Callable[..., Bar]
+        self, make_bar: Callable[..., Bar], fake_event_bus
     ) -> None:
         start = datetime(2024, 1, 1, tzinfo=UTC)
         bars = _make_bars(3, start, timedelta(hours=1), make_bar)
         exchange = FakeExchangeAdapter(bars)
         repository = FakeRepository()
-        event_bus = FakeEventBus()
-        service = DataIngestService(exchange, repository, event_bus)
+        service = DataIngestService(exchange, repository, fake_event_bus)
 
         service.sync("BTC/USDT", "1h", since=start)
 
-        bar_closed_events = [e for e in event_bus.published if isinstance(e, BarClosed)]
+        bar_closed_events = [e for e in fake_event_bus.published if isinstance(e, BarClosed)]
         assert len(bar_closed_events) == 3
         assert all(e.mode == "ingest" for e in bar_closed_events)
 
