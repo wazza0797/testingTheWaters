@@ -4,9 +4,14 @@ import pytest
 
 from trading_platform.domain.errors import StrategyError
 from trading_platform.strategies.examples.sma_crossover import SmaCrossoverStrategy
-from trading_platform.strategies.loader import instantiate_strategy, load_strategy_class
+from trading_platform.strategies.loader import (
+    describe_strategy,
+    instantiate_strategy,
+    load_strategy_class,
+)
 
 _VALID_PATH = "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+_MISSING_ON_STOP_PATH = "tests.unit.strategies._fixtures:MissingOnStopStrategy"
 
 
 class TestLoadStrategyClass:
@@ -35,7 +40,9 @@ class TestLoadStrategyClass:
 
     def test_raises_when_attribute_is_not_a_class(self) -> None:
         with pytest.raises(StrategyError, match="does not resolve to a class"):
-            load_strategy_class("trading_platform.strategies.examples.sma_crossover:_STRATEGY_NAME")
+            load_strategy_class(
+                "trading_platform.strategies.examples.sma_crossover:_PLACEHOLDER_STRATEGY_NAME"
+            )
 
 
 class TestInstantiateStrategy:
@@ -66,3 +73,47 @@ class TestInstantiateStrategy:
         strategy = instantiate_strategy(_VALID_PATH, params=None)
 
         assert isinstance(strategy, SmaCrossoverStrategy)
+
+    def test_raises_when_constructed_object_does_not_implement_istrategy(self) -> None:
+        # Fails fast here with a clear message, instead of an AttributeError
+        # surfacing deep inside StrategyHandler the first time it's used.
+        with pytest.raises(StrategyError, match="does not implement IStrategy"):
+            instantiate_strategy(_MISSING_ON_STOP_PATH)
+
+
+class TestDescribeStrategy:
+    def test_class_name_and_symbol_only_when_there_are_no_params(self) -> None:
+        assert describe_strategy(_VALID_PATH, symbol="BTC/USDT") == "SmaCrossoverStrategy[BTC/USDT]"
+        assert (
+            describe_strategy(_VALID_PATH, symbol="BTC/USDT", params={})
+            == "SmaCrossoverStrategy[BTC/USDT]"
+        )
+
+    def test_renders_params_sorted_by_key_for_determinism(self) -> None:
+        name = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"slow_period": 20, "fast_period": 5}
+        )
+
+        assert name == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+
+    def test_two_different_param_sets_produce_two_different_names(self) -> None:
+        fast = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+        slow = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 20, "slow_period": 60}
+        )
+
+        assert fast != slow
+
+    def test_same_class_and_params_on_different_symbols_produce_different_names(self) -> None:
+        btc = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+        eth = describe_strategy(
+            _VALID_PATH, symbol="ETH/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+
+        assert btc != eth
+        assert btc == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        assert eth == "SmaCrossoverStrategy[ETH/USDT](fast_period=5,slow_period=20)"

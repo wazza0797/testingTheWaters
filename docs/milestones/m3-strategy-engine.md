@@ -89,8 +89,62 @@ strategy — with zero container/CLI wiring yet, since there is no
 | Unit: loader resolves strategy from config | ✅ | `tests/unit/strategies/test_loader.py` (direct path resolution + error cases) and `tests/unit/config/test_loader.py` (YAML → `AppConfig.strategy.path`/`.params` → `instantiate_strategy`). |
 | **Bugbot finding, fixed during review** | ✅ | `instantiate_strategy` only wrapped constructor `TypeError` in `StrategyError` — a strategy raising a bare `ValueError` for semantically-invalid params (e.g. `SmaCrossoverStrategy`'s `fast_period >= slow_period` check) leaked past the loader's documented error contract. Now catches `(TypeError, ValueError)`; added a regression test. |
 | Zero network/exchange imports in strategy tests | ✅ | No test in `tests/unit/strategies/` uses `pytest.mark.network`, a `FakeExchangeAdapter`, or imports anything from `exchanges/`/`execution/`. |
-| `uv run pytest -m "not network"` passes | ✅ | 245 passed, 2 deselected |
+| `uv run pytest -m "not network"` passes | ✅ | 255 passed, 2 deselected (after the compatibility-safeguards addendum below) |
 | `uv run mypy src` / `ruff check .` / `ruff format --check .` | ✅ | all clean |
+
+## Addendum: Compatibility Safeguards (follow-up, same milestone)
+
+After the initial M3 merge, the user asked a pointed question: *if I keep
+asking for more strategies, how do we make sure distinct strategies are
+always compatible with the rest of the system?* That's a fair challenge to
+the honesty of the original "Strategy runs in isolation" acceptance
+criterion — passing tests for *one* strategy doesn't guarantee the *next*
+one will be well-behaved. Four gaps were identified and closed in a
+follow-up PR before any more strategies get added:
+
+1. **Identity collisions.** `SmaCrossoverStrategy` hardcoded
+   `strategy_name="sma_crossover"` as a module constant. Two instances of
+   the same class with different params (a fast 5/20 crossover and a slow
+   20/60 crossover) would have been indistinguishable in every metric, log,
+   and signal downstream. **Fix:** identity moved out of the strategy
+   entirely and into `StrategyHandler`, which now takes a required `name`
+   and overwrites `Signal.strategy_name` with it before publishing — no
+   strategy author needs to remember to set (or coordinate) a unique name.
+   `strategies/loader.py::describe_strategy(path, symbol, params)` derives
+   that name automatically and deterministically from the class name, the
+   traded symbol, and the parameters (e.g.
+   `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`), params
+   sorted by key for determinism. The symbol was added after a follow-up
+   discussion with the user, who wanted the instrument obvious at a glance
+   too — without it, the same class+params running on two different
+   symbols would have looked identical. Two differently-configured
+   instances (by params, symbol, or both) now get distinct names with zero
+   manual bookkeeping and no risk of a human picking colliding names.
+2. **No validation of what a strategy hands back.** `StrategyHandler`
+   published whatever `Signal`s `on_bar` returned, unchecked.
+   **Fix:** it now validates every returned signal's `symbol` matches the
+   triggering bar's `symbol` before publishing any of them for that bar
+   (all-or-nothing per bar), raising `StrategyError` on a mismatch instead of
+   silently forwarding a wrong-symbol signal toward Risk/Execution.
+3. **The dynamically-loaded path bypassed static typing entirely.**
+   `StrategyLoader` used `cast(type[IStrategy], strategy_cls)` — a promise to
+   mypy, not a runtime check. A strategy missing `on_stop` (say) wouldn't
+   fail until `StrategyHandler` called it mid-run. **Fix:** `IStrategy` is
+   now `@runtime_checkable`; `instantiate_strategy` checks
+   `isinstance(strategy, IStrategy)` right after construction and raises a
+   clear `StrategyError` immediately if the shape doesn't match.
+4. **No shared conformance suite.** Determinism, no-crash-on-a-single-bar,
+   and lifecycle-hook checks existed only in `SmaCrossoverStrategy`'s own
+   bespoke tests — nothing forced the *next* strategy's tests to cover the
+   same ground. **Fix:** added
+   `tests/unit/strategies/conformance.py::assert_strategy_conforms`, a
+   reusable helper any strategy's test file can call alongside its own
+   algorithm-specific assertions. `test_sma_crossover.py` now calls it.
+
+Also added: `tests/unit/strategies/_fixtures.py` (a deliberately incomplete
+strategy used only to test the new runtime shape check) and regression tests
+for all four fixes. Full suite grew from 246 → 255 passed; `mypy`/`ruff`
+remain clean.
 
 ## Known Gaps (by design — later milestones)
 

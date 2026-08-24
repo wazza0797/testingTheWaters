@@ -215,12 +215,46 @@ itself changes. **Not yet wired into `container.py`**: there is no
 until Milestone 4, and wiring it prematurely would react to the
 `BarClosed(mode="ingest")` events `download-data` already publishes.
 
+`StrategyHandler` is also the one place every strategy's output passes
+through regardless of which strategy produced it, so it enforces two
+invariants no individual strategy plugin can be trusted to get right on its
+own:
+
+- **Identity.** It overwrites `Signal.strategy_name` with its own `name`
+  (typically `strategies.loader.describe_strategy(path, symbol, params)`,
+  e.g. `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`)
+  before publishing. Two instances of the *same* strategy class with
+  different params — a fast 5/20 crossover and a slow 20/60 crossover on the
+  same symbol, say — get automatically distinct, self-describing identities
+  in every metric/log/signal downstream, and the symbol is baked in too, so
+  the same class+params on two different instruments never look identical
+  either. No strategy author ever hand-picks or plumbs through a name, so
+  there's no risk of two configs colliding on one, or a strategy simply
+  forgetting to set it correctly.
+- **Symbol integrity.** Every returned `Signal.symbol` must match the
+  triggering `Bar.symbol`, or the handler raises rather than publishing a
+  mismatched signal silently.
+
 [`StrategyLoader`](../src/trading_platform/strategies/loader.py) resolves a
 strategy purely from a `"module:ClassName"` config string
 (`config.strategy.path` / `config.strategy.params`) via `importlib` — adding
 a strategy is a new file + that one config string, with zero changes to the
 loader or any other core module (empirically verified, not just asserted —
-see the M3 milestone doc).
+see the M3 milestone doc). After construction, it also checks
+`isinstance(strategy, IStrategy)` (`IStrategy` is `@runtime_checkable`) so a
+strategy missing `on_start`/`on_bar`/`on_stop` fails immediately with a clear
+`StrategyError`, instead of an `AttributeError` surfacing later, mid-run,
+inside `StrategyHandler`.
+
+A shared conformance-check helper
+([`tests/unit/strategies/conformance.py`](../tests/unit/strategies/conformance.py))
+runs strategy-agnostic checks — lifecycle hooks that don't raise, no crash on
+a single bar, every signal's symbol matches its triggering bar, deterministic
+output — against any `IStrategy`. Every strategy's own test file calls it
+alongside its algorithm-specific assertions (see
+`tests/unit/strategies/examples/test_sma_crossover.py`), so a new strategy
+inherits these checks by construction rather than by remembering to write
+them.
 
 Strategies must have **zero imports** from `exchanges/`, `execution/`, or
 `ccxt`, and must be fully testable with synthetic `Bar` sequences — see the

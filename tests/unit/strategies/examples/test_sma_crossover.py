@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tests.unit.strategies.conformance import assert_strategy_conforms
 from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.strategies.context import DefaultStrategyContext
 from trading_platform.strategies.examples.sma_crossover import SmaCrossoverStrategy
@@ -154,3 +155,17 @@ class TestDeterminism:
         assert [(s.signal_type, s.timestamp, s.metadata) for s in signals_a] == [
             (s.signal_type, s.timestamp, s.metadata) for s in signals_b
         ]
+
+
+class TestGenericConformance:
+    """Every strategy's test file should call this alongside its own
+    algorithm-specific assertions above — see `tests/unit/strategies/conformance.py`.
+    """
+
+    def test_conforms_to_the_generic_istrategy_behavioral_contract(self, make_bar) -> None:
+        bars = _make_bars(make_bar)
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h")
+
+        assert_strategy_conforms(
+            lambda: SmaCrossoverStrategy(fast_period=2, slow_period=3), ctx, bars
+        )

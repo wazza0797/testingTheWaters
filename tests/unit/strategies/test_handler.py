@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from trading_platform.domain.errors import StrategyError
 from trading_platform.domain.events.base import Event
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.events.strategy import SignalGenerated
@@ -11,6 +14,9 @@ from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.strategies.context import DefaultStrategyContext
 from trading_platform.strategies.examples.sma_crossover import SmaCrossoverStrategy
 from trading_platform.strategies.handler import StrategyHandler
+from trading_platform.strategies.loader import describe_strategy
+
+_NAME = "test-strategy"
 
 
 class RecordingStrategy:
@@ -39,11 +45,17 @@ def _context() -> DefaultStrategyContext:
     return DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h")
 
 
-def _signal(symbol: str = "BTC/USDT") -> Signal:
+def _handler(
+    strategy, event_bus, symbol: str = "BTC/USDT", timeframe: str = "1h", name: str = _NAME
+):
+    return StrategyHandler(strategy, _context(), event_bus, symbol, timeframe, name)
+
+
+def _signal(symbol: str = "BTC/USDT", strategy_name: str = "whatever-the-strategy-set") -> Signal:
     return Signal(
         symbol=symbol,
         signal_type=SignalType.BUY,
-        strategy_name="test",
+        strategy_name=strategy_name,
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
@@ -51,7 +63,7 @@ def _signal(symbol: str = "BTC/USDT") -> Signal:
 class TestStrategyHandler:
     def test_ignores_events_that_are_not_bar_closed(self, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(Heartbeat(mode="paper", uptime_seconds=1.0))
 
@@ -60,7 +72,7 @@ class TestStrategyHandler:
 
     def test_ignores_bars_for_a_different_symbol(self, make_bar, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(BarClosed(bar=make_bar(symbol="ETH/USDT"), mode="backtest"))
 
@@ -68,7 +80,7 @@ class TestStrategyHandler:
 
     def test_ignores_bars_for_a_different_timeframe(self, make_bar, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(BarClosed(bar=make_bar(symbol="BTC/USDT", timeframe="4h"), mode="backtest"))
 
@@ -76,7 +88,7 @@ class TestStrategyHandler:
 
     def test_calls_on_start_once_before_first_matching_bar(self, make_bar, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
@@ -89,7 +101,7 @@ class TestStrategyHandler:
     ) -> None:
         strategy = RecordingStrategy()
         strategy.next_signals = [_signal(), _signal()]
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
 
@@ -101,7 +113,7 @@ class TestStrategyHandler:
         self, make_bar, fake_event_bus
     ) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
 
@@ -112,7 +124,7 @@ class TestStrategyHandler:
     ) -> None:
         strategy = RecordingStrategy()
         strategy.next_signals = [_signal()]
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
         bar_closed = BarClosed(bar=make_bar(), mode="backtest", correlation_id="trace-123")
 
         handler.handle(bar_closed)
@@ -123,7 +135,7 @@ class TestStrategyHandler:
 
     def test_stop_calls_on_stop_only_if_started(self, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
 
         handler.stop()
 
@@ -131,7 +143,7 @@ class TestStrategyHandler:
 
     def test_stop_calls_on_stop_after_started(self, make_bar, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
 
         handler.stop()
@@ -140,13 +152,104 @@ class TestStrategyHandler:
 
     def test_stop_is_idempotent(self, make_bar, fake_event_bus) -> None:
         strategy = RecordingStrategy()
-        handler = StrategyHandler(strategy, _context(), fake_event_bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, fake_event_bus)
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
 
         handler.stop()
         handler.stop()
 
         assert strategy.stop_calls == 1
+
+
+class TestStrategyIdentityStamping:
+    """`StrategyHandler` is the single place identity gets assigned — every
+    published signal carries the handler's own `name`, regardless of what
+    the wrapped strategy set on `Signal.strategy_name`. This is what makes
+    two instances of the *same* strategy class (different params/symbols)
+    distinguishable everywhere downstream without any strategy author
+    needing to plumb a correct, unique name through themselves.
+    """
+
+    def test_published_signal_strategy_name_is_overwritten_with_handler_name(
+        self, make_bar, fake_event_bus
+    ) -> None:
+        strategy = RecordingStrategy()
+        strategy.next_signals = [_signal(strategy_name="whatever-the-strategy-set")]
+        handler = _handler(
+            strategy,
+            fake_event_bus,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)",
+        )
+
+        handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
+
+        published = fake_event_bus.published[0]
+        assert isinstance(published, SignalGenerated)
+        assert (
+            published.signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        )
+
+    def test_two_handlers_for_the_same_strategy_class_get_distinct_identities(
+        self, make_bar
+    ) -> None:
+        bus_fast, bus_slow = InMemoryEventBus(), InMemoryEventBus()
+        recorder_fast, recorder_slow = _RecordingHandler(), _RecordingHandler()
+        bus_fast.subscribe(SignalGenerated, recorder_fast)
+        bus_slow.subscribe(SignalGenerated, recorder_slow)
+
+        fast_strategy = RecordingStrategy()
+        fast_strategy.next_signals = [_signal()]
+        slow_strategy = RecordingStrategy()
+        slow_strategy.next_signals = [_signal()]
+
+        handler_fast = _handler(
+            fast_strategy,
+            bus_fast,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)",
+        )
+        handler_slow = _handler(
+            slow_strategy,
+            bus_slow,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=20,slow_period=60)",
+        )
+
+        bar = BarClosed(bar=make_bar(), mode="backtest")
+        handler_fast.handle(bar)
+        handler_slow.handle(bar)
+
+        assert (
+            recorder_fast.received[0].signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        )
+        assert (
+            recorder_slow.received[0].signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=20,slow_period=60)"
+        )
+
+
+class TestSignalSymbolValidation:
+    def test_raises_when_a_returned_signal_has_a_different_symbol_than_the_bar(
+        self, make_bar, fake_event_bus
+    ) -> None:
+        strategy = RecordingStrategy()
+        strategy.next_signals = [_signal(symbol="ETH/USDT")]
+        handler = _handler(strategy, fake_event_bus)
+
+        with pytest.raises(StrategyError, match="mismatched signal"):
+            handler.handle(BarClosed(bar=make_bar(symbol="BTC/USDT"), mode="backtest"))
+
+    def test_publishes_nothing_when_any_signal_in_the_batch_is_mismatched(
+        self, make_bar, fake_event_bus
+    ) -> None:
+        strategy = RecordingStrategy()
+        strategy.next_signals = [_signal(symbol="BTC/USDT"), _signal(symbol="ETH/USDT")]
+        handler = _handler(strategy, fake_event_bus)
+
+        with pytest.raises(StrategyError):
+            handler.handle(BarClosed(bar=make_bar(symbol="BTC/USDT"), mode="backtest"))
+
+        assert fake_event_bus.published == []
 
 
 class _RecordingHandler:
@@ -169,7 +272,7 @@ class TestStrategyHandlerOnARealEventBus:
         bus = InMemoryEventBus()
         strategy = RecordingStrategy()
         strategy.next_signals = [_signal()]
-        handler = StrategyHandler(strategy, _context(), bus, "BTC/USDT", "1h")
+        handler = _handler(strategy, bus)
         bus.subscribe(BarClosed, handler)
 
         recorder = _RecordingHandler()
@@ -186,7 +289,14 @@ class TestStrategyHandlerOnARealEventBus:
         bus = InMemoryEventBus()
         ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h")
         strategy = SmaCrossoverStrategy(fast_period=2, slow_period=3)
-        handler = StrategyHandler(strategy, ctx, bus, "BTC/USDT", "1h")
+        # The identity a real caller would compute via describe_strategy(),
+        # proving the loader's naming and the handler's stamping agree.
+        name = describe_strategy(
+            "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy",
+            symbol="BTC/USDT",
+            params={"fast_period": 2, "slow_period": 3},
+        )
+        handler = StrategyHandler(strategy, ctx, bus, "BTC/USDT", "1h", name)
         bus.subscribe(BarClosed, handler)
 
         recorder = _RecordingHandler()
@@ -206,3 +316,4 @@ class TestStrategyHandlerOnARealEventBus:
 
         signal_types = [e.signal.signal_type for e in recorder.received]
         assert signal_types == [SignalType.BUY, SignalType.SELL]
+        assert all(e.signal.strategy_name == name for e in recorder.received)
