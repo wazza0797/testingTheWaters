@@ -17,7 +17,7 @@ from trading_platform.container import AppContainer, build_backtest_engine, buil
 from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.utils.logging import configure_logging
-from trading_platform.utils.time import utc_now
+from trading_platform.utils.time import to_utc, utc_now
 
 _HEARTBEAT_INTERVAL_SECONDS = 10.0
 
@@ -190,8 +190,13 @@ def backtest(
             )
             raise typer.Exit(code=1)
 
-        start_dt = datetime.fromisoformat(start) if start else None
-        end_dt = datetime.fromisoformat(end) if end else None
+        try:
+            start_dt = to_utc(datetime.fromisoformat(start)) if start else None
+            end_dt = to_utc(datetime.fromisoformat(end)) if end else None
+        except ValueError as exc:
+            typer.echo(f"Invalid --start/--end value: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
         bars = list(container.market_data_repository.load_bars(symbol, timeframe, start_dt, end_dt))
         if not bars:
             typer.echo(

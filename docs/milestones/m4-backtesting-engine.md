@@ -174,6 +174,23 @@ Bugbot review of the PR caught two real bugs before merge:
    with the existing "meaningless zero fill -> no fill" behavior. Regression
    tests in `tests/unit/backtesting/test_fill_simulator.py`.
 
+A follow-up re-review (verifying the two fixes above) caught a third, smaller
+issue:
+
+3. **(Medium) `backtest --start`/`--end` crashed on common date input.**
+   `datetime.fromisoformat("2024-01-01")` yields a **naive** datetime, but
+   cached bars are always UTC-aware (`exchanges/binance/mapper.py`) —
+   comparing the two inside `load_bars` raised a bare `TypeError`, which
+   isn't a `TradingPlatformError`, so it bypassed the command's error
+   handler and crashed the CLI instead of printing a clean message.
+   **Fix:** both parsed values are now normalized with the existing
+   `utils/time.py::to_utc` helper (already used elsewhere for exactly this),
+   and a malformed `--start`/`--end` string (`ValueError`) is now caught and
+   reported as a normal CLI error instead of a stack trace. Verified
+   manually: `trading-platform backtest --start 2026-08-24` (naive input) now
+   runs cleanly; `trading-platform backtest --start not-a-date` now exits 1
+   with `Invalid --start/--end value: ...` instead of crashing.
+
 Also caught and cleared by the paired Security Review: no medium+ issues
 (safe YAML loading, no `eval`/`exec`/`pickle`, `Decimal` arithmetic
 throughout, no secrets in new logging). It flagged the `BacktestLedger`
