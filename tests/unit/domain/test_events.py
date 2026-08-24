@@ -34,7 +34,7 @@ class TestEventBase:
             strategy_name="sma_crossover",
             timestamp=UTC_TS,
         )
-        signal_event = SignalGenerated(signal=signal, correlation_id="fixed-id")
+        signal_event = SignalGenerated(signal=signal, bar=make_bar(), correlation_id="fixed-id")
         order = Order(
             order_id="o1",
             correlation_id="fixed-id",
@@ -46,7 +46,9 @@ class TestEventBase:
             strategy_name="sma_crossover",
             created_at=UTC_TS,
         )
-        order_event = OrderApproved(order=order, signal=signal, correlation_id="fixed-id")
+        order_event = OrderApproved(
+            order=order, signal=signal, bar=make_bar(), correlation_id="fixed-id"
+        )
         assert signal_event.correlation_id == order_event.correlation_id == "fixed-id"
 
     def test_events_are_frozen(self, make_bar) -> None:

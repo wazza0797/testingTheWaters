@@ -21,9 +21,19 @@ class StrategyContext(Protocol):
     passes it to `indicator(...)` each call.
     """
 
-    symbol: str
-    timeframe: str
-    params: Mapping[str, Any]
+    # Declared as read-only `@property` (not plain attributes) so a frozen
+    # dataclass implementation (`strategies/context.py::DefaultStrategyContext`)
+    # structurally satisfies this Protocol under mypy — a plain `x: str`
+    # Protocol member requires a *settable* attribute on the implementer,
+    # which a frozen dataclass deliberately never provides.
+    @property
+    def symbol(self) -> str: ...
+
+    @property
+    def timeframe(self) -> str: ...
+
+    @property
+    def params(self) -> Mapping[str, Any]: ...
 
     def indicator(self, name: str, bars: Sequence[Bar], **kwargs: Any) -> float:
         """Latest value of a named indicator (see `indicators.IndicatorRegistry`)

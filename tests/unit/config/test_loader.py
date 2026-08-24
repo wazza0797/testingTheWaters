@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -70,3 +71,24 @@ class TestLoadConfig:
             "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
         )
         assert config.strategy.params == {"fast_period": 5, "slow_period": 20}
+
+    def test_backtest_starting_cash_and_position_size_default(self) -> None:
+        config = load_config(config_dir=Path("config"))
+
+        assert config.backtest.starting_cash == Decimal("10000")
+        assert config.backtest.position_size_pct == 1.0
+
+    def test_backtest_overlay_from_the_real_backtest_yaml_is_merged(self) -> None:
+        config = load_config(config_dir=Path("config"), overlay="backtest")
+
+        assert config.backtest.starting_cash == Decimal("10000")
+        assert config.backtest.spread_bps == 5
+
+    def test_backtest_starting_cash_parses_exactly_from_a_quoted_yaml_string(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "default.yaml").write_text('backtest:\n  starting_cash: "12345.67"\n')
+
+        config = load_config(config_dir=tmp_path)
+
+        assert config.backtest.starting_cash == Decimal("12345.67")

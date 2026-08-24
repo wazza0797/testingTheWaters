@@ -42,7 +42,7 @@ class TestMetricsHandler:
             == 1
         )
 
-    def test_signal_generated_increments_signals_counter(self, fake_metrics) -> None:
+    def test_signal_generated_increments_signals_counter(self, fake_metrics, make_bar) -> None:
         handler = MetricsHandler(fake_metrics)
         signal = Signal(
             symbol="BTC/USDT",
@@ -50,7 +50,7 @@ class TestMetricsHandler:
             strategy_name="sma_crossover",
             timestamp=UTC_TS,
         )
-        handler.handle(SignalGenerated(signal=signal))
+        handler.handle(SignalGenerated(signal=signal, bar=make_bar()))
 
         assert (
             fake_metrics.counter_total(
@@ -59,7 +59,7 @@ class TestMetricsHandler:
             == 1
         )
 
-    def test_order_approved_increments_orders_submitted(self, fake_metrics) -> None:
+    def test_order_approved_increments_orders_submitted(self, fake_metrics, make_bar) -> None:
         handler = MetricsHandler(fake_metrics)
         order = _order()
         signal = Signal(
@@ -68,7 +68,7 @@ class TestMetricsHandler:
             strategy_name="sma_crossover",
             timestamp=UTC_TS,
         )
-        handler.handle(OrderApproved(order=order, signal=signal))
+        handler.handle(OrderApproved(order=order, signal=signal, bar=make_bar()))
 
         assert (
             fake_metrics.counter_total(

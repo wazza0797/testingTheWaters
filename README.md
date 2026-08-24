@@ -4,11 +4,11 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–3 complete (foundation, historical data download,
-> indicator engine, pluggable strategy engine). No risk, execution, or
-> backtesting logic exists yet, and no strategy is wired into a running
-> loop — see [`docs/milestones/`](docs/milestones/) and the project plan for
-> the full roadmap.
+> **Status:** Milestones 0–4 complete (foundation, historical data download,
+> indicator engine, pluggable strategy engine, backtesting engine with
+> realistic simulated fills). No paper/live execution or portfolio
+> persistence exists yet — see [`docs/milestones/`](docs/milestones/) and the
+> project plan for the full roadmap.
 
 ## Non-Goals (for now)
 
@@ -81,8 +81,32 @@ placeholder values) is tracked.
 Strategies implement the `IStrategy` protocol
 ([`domain/ports/strategy.py`](src/trading_platform/domain/ports/strategy.py))
 and must be fully testable with synthetic bars — no imports from `exchanges/`,
-`execution/`, or `ccxt`. This lands in Milestone 3; see
-[`docs/milestones/`](docs/milestones/) for details once available.
+`execution/`, or `ccxt`. Add a new strategy as a new file plus a
+`"module:ClassName"` config entry, no changes to any core module — see
+[`docs/milestones/m3-strategy-engine.md`](docs/milestones/m3-strategy-engine.md)
+for the full design rationale and
+[`src/trading_platform/strategies/examples/sma_crossover.py`](src/trading_platform/strategies/examples/sma_crossover.py)
+for a worked reference implementation.
+
+## Backtesting
+
+Replays cached historical bars through the real strategy -> risk ->
+execution pipeline with realistic simulated fills (spread, latency, partial
+fills, maker/taker fees, exchange precision rules) — see
+[`docs/milestones/m4-backtesting-engine.md`](docs/milestones/m4-backtesting-engine.md)
+for the full design.
+
+```bash
+# 1. Download historical data + instrument rules first (never done by `backtest` itself)
+uv run trading-platform download-data --days 365
+
+# 2. Select a strategy and tune fill-simulation parameters in config/backtest.yaml,
+#    then run the backtest
+uv run trading-platform backtest
+```
+
+Prints a trade-log/equity-curve summary (fills, ending cash/equity, total
+return, fees paid, final position) at the end of the run.
 
 ## Paper vs Live Trading Safety
 

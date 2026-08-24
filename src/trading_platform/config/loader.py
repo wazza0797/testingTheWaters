@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,18 @@ class StrategyConfig(BaseModel):
 
 
 class BacktestConfig(BaseModel):
-    spread_bps: float | None = None
+    """Simulation parameters for the backtest engine (Milestone 4).
+
+    `starting_cash` and `position_size_pct` size the pass-through risk
+    engine's orders (see `risk/sizing.py::EquityFractionSizer`) — there is no
+    real position-sizing module yet. `starting_cash` is `Decimal` (not
+    `float`) so a YAML value like `"10000"` round-trips exactly; write it
+    quoted in yaml to avoid `pyyaml` parsing it as a float first.
+    """
+
+    starting_cash: Decimal = Decimal("10000")
+    position_size_pct: float = 1.0
+    spread_bps: float = 5.0
     latency_bars: int = 1
     volume_participation_rate: float = 0.10
     assume_maker_on_limit: bool = True
