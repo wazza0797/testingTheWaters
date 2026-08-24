@@ -51,9 +51,16 @@ class TestInstantiateStrategy:
         assert strategy.fast_period == 5
         assert strategy.slow_period == 20
 
-    def test_raises_strategy_error_on_bad_params(self) -> None:
+    def test_raises_strategy_error_on_unknown_keyword_param(self) -> None:
         with pytest.raises(StrategyError, match="Failed to instantiate"):
             instantiate_strategy(_VALID_PATH, params={"not_a_real_param": 1})
+
+    def test_raises_strategy_error_not_bare_value_error_on_invalid_param_values(self) -> None:
+        # SmaCrossoverStrategy.__init__ raises a bare ValueError for this —
+        # instantiate_strategy must normalize it to StrategyError, not let it
+        # propagate as-is (regression test for a Bugbot finding on this PR).
+        with pytest.raises(StrategyError, match="Failed to instantiate"):
+            instantiate_strategy(_VALID_PATH, params={"fast_period": 30, "slow_period": 10})
 
     def test_none_params_is_equivalent_to_no_params(self) -> None:
         strategy = instantiate_strategy(_VALID_PATH, params=None)

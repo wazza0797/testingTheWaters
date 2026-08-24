@@ -74,9 +74,9 @@ strategy — with zero container/CLI wiring yet, since there is no
 - `tests/conftest.py` — added a shared `FakeEventBus`/`fake_event_bus`
   fixture (previously duplicated ad hoc in `test_ingest.py`; deduplicated
   per `docs/coding-standards.md`'s "don't redefine shared fixtures" rule).
-- 47 new unit tests across `tests/unit/strategies/` (context, handler, loader,
+- 48 new unit tests across `tests/unit/strategies/` (context, handler, loader,
   reference strategy) plus 2 new `config/loader.py` tests for the new
-  `StrategyConfig` section. Full suite: **245 passed** (up from 198 at M2).
+  `StrategyConfig` section. Full suite: **246 passed** (up from 198 at M2).
 
 ## Acceptance Criteria
 
@@ -87,6 +87,7 @@ strategy — with zero container/CLI wiring yet, since there is no
 | Unit: SMA crossover generates buy/sell on known cross patterns | ✅ | `tests/unit/strategies/examples/test_sma_crossover.py` — hand-computed SMA(2)/SMA(3) table for an 11-bar series, asserting a `BUY` at exactly index 5 (golden cross) and `SELL` at exactly index 7 (death cross), and **no** signal at any of the other 9 indices, including the flat plateaus where fast == slow exactly. |
 | Unit: `StrategyHandler` publishes correct events on bar sequence | ✅ | `tests/unit/strategies/test_handler.py` — symbol/timeframe filtering, one-time `on_start`, per-signal `SignalGenerated` publication, `correlation_id` propagation from the triggering `BarClosed`, and `stop()`/idempotency. Plus two end-to-end tests through a real `InMemoryEventBus` (not just `handler.handle(...)` calls) — one with a scripted double, one with the real `SmaCrossoverStrategy` — publishing `BarClosed` and asserting `SignalGenerated` comes out the other side. |
 | Unit: loader resolves strategy from config | ✅ | `tests/unit/strategies/test_loader.py` (direct path resolution + error cases) and `tests/unit/config/test_loader.py` (YAML → `AppConfig.strategy.path`/`.params` → `instantiate_strategy`). |
+| **Bugbot finding, fixed during review** | ✅ | `instantiate_strategy` only wrapped constructor `TypeError` in `StrategyError` — a strategy raising a bare `ValueError` for semantically-invalid params (e.g. `SmaCrossoverStrategy`'s `fast_period >= slow_period` check) leaked past the loader's documented error contract. Now catches `(TypeError, ValueError)`; added a regression test. |
 | Zero network/exchange imports in strategy tests | ✅ | No test in `tests/unit/strategies/` uses `pytest.mark.network`, a `FakeExchangeAdapter`, or imports anything from `exchanges/`/`execution/`. |
 | `uv run pytest -m "not network"` passes | ✅ | 245 passed, 2 deselected |
 | `uv run mypy src` / `ruff check .` / `ruff format --check .` | ✅ | all clean |

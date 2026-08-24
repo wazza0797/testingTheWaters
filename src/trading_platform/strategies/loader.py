@@ -39,11 +39,18 @@ def load_strategy_class(path: str) -> type[IStrategy]:
 
 
 def instantiate_strategy(path: str, params: Mapping[str, Any] | None = None) -> IStrategy:
-    """Resolve and construct a strategy, passing `params` as keyword arguments."""
+    """Resolve and construct a strategy, passing `params` as keyword arguments.
+
+    Wraps both signature mismatches (`TypeError` — unknown/missing keyword
+    arguments) and constructor-level validation failures (`ValueError` — e.g.
+    `SmaCrossoverStrategy`'s `fast_period >= slow_period` check) in
+    `StrategyError`, so callers never need to know which exception type a
+    given strategy's `__init__` happens to raise for bad params.
+    """
     strategy_cls = load_strategy_class(path)
     try:
         return strategy_cls(**dict(params or {}))
-    except TypeError as exc:
+    except (TypeError, ValueError) as exc:
         raise StrategyError(
             f"Failed to instantiate strategy {path!r} with params {dict(params or {})!r}: {exc}"
         ) from exc
