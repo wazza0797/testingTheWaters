@@ -48,3 +48,25 @@ class TestLoadConfig:
 
         with pytest.raises(ConfigurationError):
             load_config(config_dir=tmp_path)
+
+    def test_strategy_defaults_to_no_path_and_empty_params(self) -> None:
+        config = load_config(config_dir=Path("config"))
+
+        assert config.strategy.path is None
+        assert config.strategy.params == {}
+
+    def test_strategy_section_is_read_from_yaml(self, tmp_path: Path) -> None:
+        (tmp_path / "default.yaml").write_text(
+            "strategy:\n"
+            '  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"\n'
+            "  params:\n"
+            "    fast_period: 5\n"
+            "    slow_period: 20\n"
+        )
+
+        config = load_config(config_dir=tmp_path)
+
+        assert config.strategy.path == (
+            "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+        )
+        assert config.strategy.params == {"fast_period": 5, "slow_period": 20}

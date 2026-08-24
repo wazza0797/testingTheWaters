@@ -4,3 +4,12 @@ trading:
   exchange: binance
   symbol: BTC/USDT
   timeframe: 1h
+
+# Strategy selection — read by StrategyLoader once a runner exists to use it
+# (Milestone 4 backtest engine). `path` is "module:ClassName"; uncomment to
+# select the bundled reference strategy:
+# strategy:
+#   path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+#   params:
+#     fast_period: 10
+#     slow_period: 30

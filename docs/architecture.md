@@ -189,10 +189,42 @@ class IStrategy(Protocol):
     def on_stop(self, ctx: StrategyContext) -> None: ...
 ```
 
-`StrategyContext` (fleshed out in Milestone 3) exposes indicator helpers,
-read-only positions, and config params. Strategies must have **zero imports**
-from `exchanges/`, `execution/`, or `ccxt`, and must be fully testable with
-synthetic `Bar` sequences.
+`StrategyContext` (Milestone 3) is itself a `Protocol` — not a concrete
+class — so `domain/ports/strategy.py` never needs to import `pandas` or
+`indicators/`; it exposes:
+
+- `symbol`, `timeframe`, `params` (strategy-specific config from `config/*.yaml`)
+- `indicator(name, bars, **kwargs) -> float`: latest value of a named
+  indicator (`indicators.IndicatorRegistry`) computed over a bar sequence the
+  strategy accumulates itself (`on_bar` only ever receives one new `Bar` at a
+  time — no history is pushed in). Returns `NaN` on insufficient history.
+- `position_for(symbol) -> Position | None`: read-only positions, backed by
+  [`IPositionProvider`](../src/trading_platform/domain/ports/portfolio.py).
+  Milestone 3 wires the stub `NullPositionProvider` (always flat — no
+  position tracking exists yet); Milestone 5's `PortfolioHandler` supplies
+  the real implementation later with no strategy-facing change.
+
+[`StrategyHandler`](../src/trading_platform/strategies/handler.py) adapts one
+strategy instance to the event bus: subscribes to `BarClosed` filtered to its
+own symbol/timeframe, calls `on_start` once lazily, and publishes a
+`SignalGenerated` (reusing the triggering bar's `correlation_id`) per
+returned `Signal`. Running several strategies (or one strategy across several
+symbols) means constructing several `StrategyHandler`s — nothing in the class
+itself changes. **Not yet wired into `container.py`**: there is no
+`TradingLoop`/`BacktestEngine` to drive `BarClosed` for a real trading mode
+until Milestone 4, and wiring it prematurely would react to the
+`BarClosed(mode="ingest")` events `download-data` already publishes.
+
+[`StrategyLoader`](../src/trading_platform/strategies/loader.py) resolves a
+strategy purely from a `"module:ClassName"` config string
+(`config.strategy.path` / `config.strategy.params`) via `importlib` — adding
+a strategy is a new file + that one config string, with zero changes to the
+loader or any other core module (empirically verified, not just asserted —
+see the M3 milestone doc).
+
+Strategies must have **zero imports** from `exchanges/`, `execution/`, or
+`ccxt`, and must be fully testable with synthetic `Bar` sequences — see the
+reference [`SmaCrossoverStrategy`](../src/trading_platform/strategies/examples/sma_crossover.py).
 
 ### 4. Internal Event Bus (In-Process Pub/Sub)
 
