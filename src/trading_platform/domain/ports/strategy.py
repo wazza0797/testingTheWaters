@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.position import Position
@@ -39,9 +39,18 @@ class StrategyContext(Protocol):
         ...
 
 
+@runtime_checkable
 class IStrategy(Protocol):
     """A pluggable strategy. Must be testable with synthetic bars and zero
     imports from `exchanges/`, `execution/`, or `ccxt` (see coding standards).
+
+    `@runtime_checkable`: `IStrategy` has methods only (no data attributes),
+    so `isinstance(obj, IStrategy)` reliably checks that all three methods
+    exist (not their exact signatures — Python can't check that at runtime).
+    `strategies/loader.py::instantiate_strategy` uses this to fail fast with
+    a clear `StrategyError` for a malformed dynamically-loaded strategy,
+    instead of an `AttributeError` surfacing later mid-run inside
+    `StrategyHandler`.
     """
 
     def on_start(self, ctx: StrategyContext) -> None: ...

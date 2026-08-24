@@ -7,7 +7,11 @@ from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.domain.ports.strategy import StrategyContext
 
-_STRATEGY_NAME = "sma_crossover"
+# Just a placeholder: `StrategyHandler` always overwrites `Signal.strategy_name`
+# with a per-instance identity (see `strategies/loader.py::describe_strategy`)
+# before publishing, so this strategy doesn't need to know or care about its
+# own configured identity.
+_PLACEHOLDER_STRATEGY_NAME = "sma_crossover"
 
 
 class SmaCrossoverStrategy:
@@ -91,7 +95,7 @@ class SmaCrossoverStrategy:
         return Signal(
             symbol=bar.symbol,
             signal_type=signal_type,
-            strategy_name=_STRATEGY_NAME,
+            strategy_name=_PLACEHOLDER_STRATEGY_NAME,
             timestamp=bar.timestamp,
             metadata=metadata,
         )

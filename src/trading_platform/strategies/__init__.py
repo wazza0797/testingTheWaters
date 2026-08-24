@@ -16,12 +16,17 @@ from __future__ import annotations
 
 from trading_platform.strategies.context import DefaultStrategyContext, NullPositionProvider
 from trading_platform.strategies.handler import StrategyHandler
-from trading_platform.strategies.loader import instantiate_strategy, load_strategy_class
+from trading_platform.strategies.loader import (
+    describe_strategy,
+    instantiate_strategy,
+    load_strategy_class,
+)
 
 __all__ = [
     "DefaultStrategyContext",
     "NullPositionProvider",
     "StrategyHandler",
+    "describe_strategy",
     "instantiate_strategy",
     "load_strategy_class",
 ]

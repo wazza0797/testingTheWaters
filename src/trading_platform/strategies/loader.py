@@ -46,11 +46,44 @@ def instantiate_strategy(path: str, params: Mapping[str, Any] | None = None) -> 
     `SmaCrossoverStrategy`'s `fast_period >= slow_period` check) in
     `StrategyError`, so callers never need to know which exception type a
     given strategy's `__init__` happens to raise for bad params.
+
+    Also verifies the constructed object actually satisfies `IStrategy`
+    (`on_start`/`on_bar`/`on_stop` all present — see the `@runtime_checkable`
+    note on `IStrategy`) before handing it back, so a malformed
+    dynamically-loaded strategy fails here with a clear message rather than
+    with an `AttributeError` the first time `StrategyHandler` calls it.
     """
     strategy_cls = load_strategy_class(path)
     try:
-        return strategy_cls(**dict(params or {}))
+        strategy = strategy_cls(**dict(params or {}))
     except (TypeError, ValueError) as exc:
         raise StrategyError(
             f"Failed to instantiate strategy {path!r} with params {dict(params or {})!r}: {exc}"
         ) from exc
+
+    if not isinstance(strategy, IStrategy):
+        raise StrategyError(
+            f"{path!r} does not implement IStrategy "
+            "(missing one or more of on_start/on_bar/on_stop)"
+        )
+    return strategy
+
+
+def describe_strategy(path: str, params: Mapping[str, Any] | None = None) -> str:
+    """A deterministic, human-readable identity string for a strategy
+    *instance*, derived purely from its class name and params — e.g.
+    `"SmaCrossoverStrategy(fast_period=5,slow_period=20)"`.
+
+    This is the identity `StrategyHandler` stamps onto every `Signal` it
+    publishes (overwriting whatever the strategy itself set on
+    `Signal.strategy_name`). Running the same strategy class twice with
+    different params — e.g. a fast and a slow SMA crossover on the same
+    symbol — automatically gets two distinct, self-explanatory identities
+    with no manual naming required, and no risk of two configs accidentally
+    colliding on the same name.
+    """
+    class_name = path.rpartition(":")[-1]
+    if not params:
+        return class_name
+    rendered_params = ",".join(f"{key}={value}" for key, value in sorted(params.items()))
+    return f"{class_name}({rendered_params})"
