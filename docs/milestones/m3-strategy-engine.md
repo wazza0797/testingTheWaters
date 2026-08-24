@@ -110,12 +110,16 @@ follow-up PR before any more strategies get added:
    entirely and into `StrategyHandler`, which now takes a required `name`
    and overwrites `Signal.strategy_name` with it before publishing — no
    strategy author needs to remember to set (or coordinate) a unique name.
-   `strategies/loader.py::describe_strategy(path, params)` derives that name
-   automatically and deterministically from the class name and its
-   parameters (e.g. `"SmaCrossoverStrategy(fast_period=5,slow_period=20)"`),
-   sorted by key for determinism, so two differently-configured instances
-   get two different names with zero manual bookkeeping and no risk of a
-   human picking colliding names.
+   `strategies/loader.py::describe_strategy(path, symbol, params)` derives
+   that name automatically and deterministically from the class name, the
+   traded symbol, and the parameters (e.g.
+   `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`), params
+   sorted by key for determinism. The symbol was added after a follow-up
+   discussion with the user, who wanted the instrument obvious at a glance
+   too — without it, the same class+params running on two different
+   symbols would have looked identical. Two differently-configured
+   instances (by params, symbol, or both) now get distinct names with zero
+   manual bookkeeping and no risk of a human picking colliding names.
 2. **No validation of what a strategy hands back.** `StrategyHandler`
    published whatever `Signal`s `on_bar` returned, unchecked.
    **Fix:** it now validates every returned signal's `symbol` matches the

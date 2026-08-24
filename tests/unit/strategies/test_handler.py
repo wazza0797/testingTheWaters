@@ -14,6 +14,7 @@ from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.strategies.context import DefaultStrategyContext
 from trading_platform.strategies.examples.sma_crossover import SmaCrossoverStrategy
 from trading_platform.strategies.handler import StrategyHandler
+from trading_platform.strategies.loader import describe_strategy
 
 _NAME = "test-strategy"
 
@@ -174,13 +175,20 @@ class TestStrategyIdentityStamping:
     ) -> None:
         strategy = RecordingStrategy()
         strategy.next_signals = [_signal(strategy_name="whatever-the-strategy-set")]
-        handler = _handler(strategy, fake_event_bus, name="SmaCrossoverStrategy(fast=5,slow=20)")
+        handler = _handler(
+            strategy,
+            fake_event_bus,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)",
+        )
 
         handler.handle(BarClosed(bar=make_bar(), mode="backtest"))
 
         published = fake_event_bus.published[0]
         assert isinstance(published, SignalGenerated)
-        assert published.signal.strategy_name == "SmaCrossoverStrategy(fast=5,slow=20)"
+        assert (
+            published.signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        )
 
     def test_two_handlers_for_the_same_strategy_class_get_distinct_identities(
         self, make_bar
@@ -195,15 +203,29 @@ class TestStrategyIdentityStamping:
         slow_strategy = RecordingStrategy()
         slow_strategy.next_signals = [_signal()]
 
-        handler_fast = _handler(fast_strategy, bus_fast, name="sma(fast=5,slow=20)")
-        handler_slow = _handler(slow_strategy, bus_slow, name="sma(fast=20,slow=60)")
+        handler_fast = _handler(
+            fast_strategy,
+            bus_fast,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)",
+        )
+        handler_slow = _handler(
+            slow_strategy,
+            bus_slow,
+            name="SmaCrossoverStrategy[BTC/USDT](fast_period=20,slow_period=60)",
+        )
 
         bar = BarClosed(bar=make_bar(), mode="backtest")
         handler_fast.handle(bar)
         handler_slow.handle(bar)
 
-        assert recorder_fast.received[0].signal.strategy_name == "sma(fast=5,slow=20)"
-        assert recorder_slow.received[0].signal.strategy_name == "sma(fast=20,slow=60)"
+        assert (
+            recorder_fast.received[0].signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        )
+        assert (
+            recorder_slow.received[0].signal.strategy_name
+            == "SmaCrossoverStrategy[BTC/USDT](fast_period=20,slow_period=60)"
+        )
 
 
 class TestSignalSymbolValidation:
@@ -267,14 +289,14 @@ class TestStrategyHandlerOnARealEventBus:
         bus = InMemoryEventBus()
         ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h")
         strategy = SmaCrossoverStrategy(fast_period=2, slow_period=3)
-        handler = StrategyHandler(
-            strategy,
-            ctx,
-            bus,
-            "BTC/USDT",
-            "1h",
-            "SmaCrossoverStrategy(fast_period=2,slow_period=3)",
+        # The identity a real caller would compute via describe_strategy(),
+        # proving the loader's naming and the handler's stamping agree.
+        name = describe_strategy(
+            "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy",
+            symbol="BTC/USDT",
+            params={"fast_period": 2, "slow_period": 3},
         )
+        handler = StrategyHandler(strategy, ctx, bus, "BTC/USDT", "1h", name)
         bus.subscribe(BarClosed, handler)
 
         recorder = _RecordingHandler()
@@ -294,7 +316,4 @@ class TestStrategyHandlerOnARealEventBus:
 
         signal_types = [e.signal.signal_type for e in recorder.received]
         assert signal_types == [SignalType.BUY, SignalType.SELL]
-        assert all(
-            e.signal.strategy_name == "SmaCrossoverStrategy(fast_period=2,slow_period=3)"
-            for e in recorder.received
-        )
+        assert all(e.signal.strategy_name == name for e in recorder.received)

@@ -221,14 +221,16 @@ invariants no individual strategy plugin can be trusted to get right on its
 own:
 
 - **Identity.** It overwrites `Signal.strategy_name` with its own `name`
-  (typically `strategies.loader.describe_strategy(path, params)`, e.g.
-  `"SmaCrossoverStrategy(fast_period=5,slow_period=20)"`) before publishing.
-  Two instances of the *same* strategy class with different params — a fast
-  5/20 crossover and a slow 20/60 crossover on the same symbol, say — get
-  automatically distinct, self-describing identities in every metric/log/
-  signal downstream. No strategy author ever hand-picks or plumbs through a
-  name, so there's no risk of two configs colliding on one, or a strategy
-  simply forgetting to set it correctly.
+  (typically `strategies.loader.describe_strategy(path, symbol, params)`,
+  e.g. `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`)
+  before publishing. Two instances of the *same* strategy class with
+  different params — a fast 5/20 crossover and a slow 20/60 crossover on the
+  same symbol, say — get automatically distinct, self-describing identities
+  in every metric/log/signal downstream, and the symbol is baked in too, so
+  the same class+params on two different instruments never look identical
+  either. No strategy author ever hand-picks or plumbs through a name, so
+  there's no risk of two configs colliding on one, or a strategy simply
+  forgetting to set it correctly.
 - **Symbol integrity.** Every returned `Signal.symbol` must match the
   triggering `Bar.symbol`, or the handler raises rather than publishing a
   mismatched signal silently.

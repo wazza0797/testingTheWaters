@@ -31,12 +31,12 @@ class StrategyHandler:
     trusted to get right on its own:
 
     - **Identity**: `name` (typically `strategies.loader.describe_strategy`,
-      e.g. `"SmaCrossoverStrategy(fast_period=5,slow_period=20)"`) overwrites
-      whatever the strategy itself set on `Signal.strategy_name` before
-      publishing. This is what lets two instances of the *same* strategy
-      class with different params (or on different symbols) be told apart in
-      every metric/log/signal downstream — without relying on every strategy
-      author to plumb a correct, unique name through by hand.
+      e.g. `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`)
+      overwrites whatever the strategy itself set on `Signal.strategy_name`
+      before publishing. This is what lets two instances of the *same*
+      strategy class with different params (or on different symbols) be
+      told apart in every metric/log/signal downstream — without relying on
+      every strategy author to plumb a correct, unique name through by hand.
     - **Symbol integrity**: every returned `Signal.symbol` must match the
       `Bar.symbol` that triggered it. A mismatch is a strategy bug (e.g. a
       copy-paste error hardcoding the wrong symbol) that must never reach

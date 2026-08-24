@@ -82,17 +82,38 @@ class TestInstantiateStrategy:
 
 
 class TestDescribeStrategy:
-    def test_class_name_only_when_there_are_no_params(self) -> None:
-        assert describe_strategy(_VALID_PATH) == "SmaCrossoverStrategy"
-        assert describe_strategy(_VALID_PATH, params={}) == "SmaCrossoverStrategy"
+    def test_class_name_and_symbol_only_when_there_are_no_params(self) -> None:
+        assert describe_strategy(_VALID_PATH, symbol="BTC/USDT") == "SmaCrossoverStrategy[BTC/USDT]"
+        assert (
+            describe_strategy(_VALID_PATH, symbol="BTC/USDT", params={})
+            == "SmaCrossoverStrategy[BTC/USDT]"
+        )
 
     def test_renders_params_sorted_by_key_for_determinism(self) -> None:
-        name = describe_strategy(_VALID_PATH, params={"slow_period": 20, "fast_period": 5})
+        name = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"slow_period": 20, "fast_period": 5}
+        )
 
-        assert name == "SmaCrossoverStrategy(fast_period=5,slow_period=20)"
+        assert name == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
 
     def test_two_different_param_sets_produce_two_different_names(self) -> None:
-        fast = describe_strategy(_VALID_PATH, params={"fast_period": 5, "slow_period": 20})
-        slow = describe_strategy(_VALID_PATH, params={"fast_period": 20, "slow_period": 60})
+        fast = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+        slow = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 20, "slow_period": 60}
+        )
 
         assert fast != slow
+
+    def test_same_class_and_params_on_different_symbols_produce_different_names(self) -> None:
+        btc = describe_strategy(
+            _VALID_PATH, symbol="BTC/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+        eth = describe_strategy(
+            _VALID_PATH, symbol="ETH/USDT", params={"fast_period": 5, "slow_period": 20}
+        )
+
+        assert btc != eth
+        assert btc == "SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"
+        assert eth == "SmaCrossoverStrategy[ETH/USDT](fast_period=5,slow_period=20)"

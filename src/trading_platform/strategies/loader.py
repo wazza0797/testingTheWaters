@@ -69,10 +69,10 @@ def instantiate_strategy(path: str, params: Mapping[str, Any] | None = None) -> 
     return strategy
 
 
-def describe_strategy(path: str, params: Mapping[str, Any] | None = None) -> str:
+def describe_strategy(path: str, symbol: str, params: Mapping[str, Any] | None = None) -> str:
     """A deterministic, human-readable identity string for a strategy
-    *instance*, derived purely from its class name and params — e.g.
-    `"SmaCrossoverStrategy(fast_period=5,slow_period=20)"`.
+    *instance*, derived purely from its class name, traded symbol, and
+    params — e.g. `"SmaCrossoverStrategy[BTC/USDT](fast_period=5,slow_period=20)"`.
 
     This is the identity `StrategyHandler` stamps onto every `Signal` it
     publishes (overwriting whatever the strategy itself set on
@@ -80,10 +80,12 @@ def describe_strategy(path: str, params: Mapping[str, Any] | None = None) -> str
     different params — e.g. a fast and a slow SMA crossover on the same
     symbol — automatically gets two distinct, self-explanatory identities
     with no manual naming required, and no risk of two configs accidentally
-    colliding on the same name.
+    colliding on the same name. Including the symbol means the same
+    class+params on two different instruments (e.g. BTC/USDT vs ETH/USDT)
+    are just as unambiguous at a glance.
     """
     class_name = path.rpartition(":")[-1]
     if not params:
-        return class_name
+        return f"{class_name}[{symbol}]"
     rendered_params = ",".join(f"{key}={value}" for key, value in sorted(params.items()))
-    return f"{class_name}({rendered_params})"
+    return f"{class_name}[{symbol}]({rendered_params})"
