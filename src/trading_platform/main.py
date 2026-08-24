@@ -4,7 +4,7 @@ import asyncio
 import logging
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import typer
 import uvicorn
@@ -13,7 +13,7 @@ import yaml
 from trading_platform import __version__
 from trading_platform.config.loader import load_config
 from trading_platform.config.settings import Settings
-from trading_platform.container import AppContainer, build_container
+from trading_platform.container import AppContainer, build_backtest_engine, build_container
 from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.utils.logging import configure_logging
@@ -160,10 +160,69 @@ def download_data(
 
 
 @app.command()
-def backtest() -> None:
-    """Run a strategy backtest. Implemented in Milestone 4."""
-    typer.echo("Not yet implemented — see Milestone 4 (Backtesting Engine).")
-    raise typer.Exit(code=1)
+def backtest(
+    start: str | None = typer.Option(
+        None, "--start", help="ISO date/datetime to start from (default: earliest cached bar)."
+    ),
+    end: str | None = typer.Option(
+        None, "--end", help="ISO date/datetime to end at, exclusive (default: latest cached bar)."
+    ),
+) -> None:
+    """Replay cached historical bars through strategy -> risk -> execution
+    with realistic simulated fills, and print the resulting trade log summary
+    and equity curve (Milestone 4).
+
+    Requires `trading-platform download-data` to have been run first for the
+    configured symbol/timeframe — this command never talks to an exchange.
+    """
+    container = _bootstrap(overlay="backtest")
+    symbol = container.config.trading.symbol
+    timeframe = container.config.trading.timeframe
+    exchange_name = container.exchange_adapter.exchange_name
+
+    try:
+        rules = container.instrument_rules_cache.load(exchange_name, symbol)
+        if rules is None:
+            typer.echo(
+                f"No cached instrument rules for {symbol} on {exchange_name}. "
+                "Run 'trading-platform download-data' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        start_dt = datetime.fromisoformat(start) if start else None
+        end_dt = datetime.fromisoformat(end) if end else None
+        bars = list(container.market_data_repository.load_bars(symbol, timeframe, start_dt, end_dt))
+        if not bars:
+            typer.echo(
+                f"No cached bars for {symbol}@{timeframe} in the requested range. "
+                "Run 'trading-platform download-data' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        run = build_backtest_engine(container, rules)
+        typer.echo(
+            f"Backtesting {run.symbol}@{run.timeframe} over {len(bars)} bar(s) "
+            f"({bars[0].timestamp.isoformat()} -> {bars[-1].timestamp.isoformat()})..."
+        )
+
+        result = run.engine.run(bars, timeframe)
+        run.strategy_handler.stop()
+
+        typer.echo("")
+        typer.echo("=== Backtest Result ===")
+        typer.echo(f"Bars processed:     {result.bars_processed}")
+        typer.echo(f"Fills:              {len(result.fills)}")
+        typer.echo(f"Starting cash:      {result.starting_cash}")
+        typer.echo(f"Ending cash:        {result.ending_cash}")
+        typer.echo(f"Ending equity:      {result.ending_equity}")
+        typer.echo(f"Total return:       {result.total_return_pct:.2f}%")
+        typer.echo(f"Total fees paid:    {result.total_fees_paid}")
+        typer.echo(f"Final position:    {result.final_position}")
+    except TradingPlatformError as exc:
+        typer.echo(f"Backtest failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

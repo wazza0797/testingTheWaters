@@ -133,6 +133,20 @@ class TestStrategyHandler:
         assert isinstance(published, SignalGenerated)
         assert published.correlation_id == "trace-123"
 
+    def test_signal_generated_carries_the_triggering_bar(self, make_bar, fake_event_bus) -> None:
+        # RiskHandler (M4) has no other way to get a reference price for a
+        # Signal — Signal itself is deliberately quantity/price-free.
+        strategy = RecordingStrategy()
+        strategy.next_signals = [_signal()]
+        handler = _handler(strategy, fake_event_bus)
+        bar = make_bar()
+
+        handler.handle(BarClosed(bar=bar, mode="backtest"))
+
+        published = fake_event_bus.published[0]
+        assert isinstance(published, SignalGenerated)
+        assert published.bar is bar
+
     def test_stop_calls_on_stop_only_if_started(self, fake_event_bus) -> None:
         strategy = RecordingStrategy()
         handler = _handler(strategy, fake_event_bus)

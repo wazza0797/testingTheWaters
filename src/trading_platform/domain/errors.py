@@ -34,3 +34,11 @@ class ConfigurationError(TradingPlatformError):
 
 class StrategyError(TradingPlatformError):
     """Raised when a strategy plugin fails to load or execute."""
+
+
+class PortfolioError(TradingPlatformError):
+    """Raised when a ledger/portfolio invariant is violated — e.g. a fill
+    tries to sell more quantity than is currently held. Indicates a bug
+    upstream (risk sizing, order queue, or fill simulator), not a user-facing
+    configuration problem.
+    """

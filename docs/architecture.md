@@ -276,14 +276,14 @@ analytics, and notifications.
 
 | Event | Published by | Consumed by |
 |-------|-------------|-------------|
-| `BarClosed` | TradingLoop / BacktestEngine | StrategyHandler |
-| `SignalGenerated` | StrategyHandler | RiskHandler |
-| `OrderApproved` | RiskHandler | ExecutionHandler |
-| `RiskRejected` | RiskHandler | NotificationHandler |
-| `OrderRejected` | ExecutionHandler / SimBroker | NotificationHandler, AnalyticsHandler |
-| `FillReceived` | ExecutionHandler / SimBroker | PortfolioHandler, NotificationHandler, AnalyticsHandler |
+| `BarClosed` | `TradingLoop` (via `BacktestEngine`, M4) | `StrategyHandler` |
+| `SignalGenerated` | `StrategyHandler` | `RiskHandler` |
+| `OrderApproved` | `RiskHandler` | `ExecutionHandler` |
+| `RiskRejected` | `RiskHandler` | NotificationHandler (M7) |
+| `OrderRejected` | `ExecutionHandler` | NotificationHandler (M7), AnalyticsHandler (M5) |
+| `FillReceived` | `ExecutionHandler` (synchronous fills) / `BacktestEngine` (M4, `SimBroker.process_bar` fills) | PortfolioHandler (M6), NotificationHandler (M7), AnalyticsHandler (M5) |
 | `ErrorOccurred` | Any handler | NotificationHandler, logging |
-| `Heartbeat` | TradingLoop | NotificationHandler, health endpoint |
+| `Heartbeat` | `TradingLoop` / observability poller | NotificationHandler, health endpoint |
 
 **Design constraints:**
 - Events carry **immutable snapshots** (bar, signal, fill) — not live object references.
@@ -301,50 +301,102 @@ Event types remain unchanged.
 
 ### 5. Risk Sits Between Strategy and Execution (via Events)
 
-Initial implementation (Milestone 6): pass-through risk engine (approves all
-signals) with hook points for rules. `RiskHandler` subscribes to
-`SignalGenerated` and publishes `OrderApproved` or `RiskRejected`. No direct
-call from strategy to execution.
+Implemented in Milestone 4:
+[`PassThroughRiskEngine`](../src/trading_platform/risk/engine.py) —
+long-only, no averaging/pyramiding (a `BUY` while already in a position, or a
+`SELL`/`CLOSE` while flat, is rejected outright), sizing every accepted `BUY`
+via [`EquityFractionSizer`](../src/trading_platform/risk/sizing.py) (a fixed
+fraction of current equity — `config.backtest.position_size_pct`, `1.0` =
+100%). [`RiskHandler`](../src/trading_platform/risk/handler.py) subscribes to
+`SignalGenerated` and publishes `OrderApproved` or `RiskRejected` — no direct
+call from strategy to execution. True risk rules (max position size,
+drawdown halt, correlation limits, ...) are unscheduled future work; they
+would be composed into a rule-chain engine without changing `IRiskEngine`.
 
 ### 6. Backtest and Paper Share the Same Event Pipeline
 
-Both modes use `TradingLoop` + `EventBus` + the same handler chain. Backtest
-replays historical bars; paper polls live bars. Only the bar source and broker
-implementation differ. Both `SimBroker` and `PaperBroker` delegate to a shared
-`FillSimulator` pipeline (Milestone 4) so fill realism stays consistent
-across modes.
+Both modes use [`TradingLoop`](../src/trading_platform/application/trading_loop.py)
+\+ `EventBus` + the same strategy/risk/execution handler chain. `TradingLoop`
+itself only publishes one `BarClosed` per bar, in order — everything
+mode-specific (backtest's pending-order queue draining before each bar; a
+future paper loop's live-feed polling) is a `before_bar`/`after_bar` hook the
+caller supplies, not logic inside `TradingLoop`.
+[`BacktestEngine`](../src/trading_platform/backtesting/engine.py) (Milestone
+4) is the first caller: it replays cached historical bars, drains
+`SimBroker`'s pending orders against each bar *before* that bar's
+`BarClosed` triggers the strategy (no look-ahead), and assembles a
+`BacktestResult` (trade log + equity curve). A future paper loop reuses
+`TradingLoop` unchanged with a live bar source and a `PaperBroker`; both
+`SimBroker` and `PaperBroker` will delegate to the same `FillSimulator`
+pipeline so fill realism stays consistent across modes.
 
 ### 7. Realistic Backtest Fill Simulation (Milestone 4)
 
-Backtesting must model exchange microstructure constraints, not just
-bar-close fills with a flat fee. A `FillSimulator` will apply rules in a fixed
-pipeline:
+Backtesting models exchange microstructure constraints, not just bar-close
+fills with a flat fee. [`SimBroker`](../src/trading_platform/backtesting/broker_sim.py)
+(the backtest's `IBroker`) enqueues every `OrderApproved`-derived order into an
+[`OrderQueue`](../src/trading_platform/backtesting/order_queue.py) (tracks
+per-order latency and remaining quantity across bars), then on each bar
+attempts a fill via [`FillSimulator`](../src/trading_platform/backtesting/fill_simulator.py):
 
 ```mermaid
 flowchart LR
-    OrderApproved --> Validator
-    Validator --> LatencyQueue
-    LatencyQueue --> SpreadModel
-    SpreadModel --> PartialFill
-    PartialFill --> FeeModel
+    OrderApproved --> OrderValidator
+    OrderValidator --> OrderQueue["OrderQueue (latency)"]
+    OrderQueue --> SpreadModel
+    SpreadModel --> PartialFillModel
+    PartialFillModel --> FeeModel
     FeeModel --> FillReceived
 ```
+
+- [`execution/order_validator.py`](../src/trading_platform/execution/order_validator.py) —
+  exchange-rule-level rejection (`min_qty`/`min_notional`), run by
+  `ExecutionHandler` before an order ever reaches the broker. Distinct from
+  Risk's trading-policy-level rejections (already in a position, nothing to
+  close).
+- [`backtesting/models/latency_model.py`](../src/trading_platform/backtesting/models/latency_model.py) +
+  `OrderQueue` — an order submitted reacting to bar N can only fill starting
+  at bar N+1 (`config.backtest.latency_bars`), eliminating look-ahead bias.
+- [`backtesting/models/spread_model.py`](../src/trading_platform/backtesting/models/spread_model.py) —
+  a `BUY` fills at `mid + half_spread`, a `SELL` at `mid - half_spread`
+  (`config.backtest.spread_bps`), always worse than the mid price.
+- [`backtesting/models/partial_fill_model.py`](../src/trading_platform/backtesting/models/partial_fill_model.py) —
+  caps one bar's fillable quantity to a fraction of that bar's volume
+  (`config.backtest.volume_participation_rate`); a large order fills across
+  several bars, the remainder re-offered each time via `OrderQueue`.
+- [`backtesting/models/fee_model.py`](../src/trading_platform/backtesting/models/fee_model.py) —
+  market orders and limit orders that cross on submission are taker; a
+  non-crossing limit order is maker if `config.backtest.assume_maker_on_limit`.
 
 `InstrumentRules` (`tick_size`, `step_size`, `min_qty`, `min_notional`,
 `price_precision`, `qty_precision`, `maker_fee_rate`, `taker_fee_rate`) are
 fetched from the exchange adapter and cached to
-`data/instruments/{exchange}/{symbol}.json`. Rounding/validation will live in
-`execution/precision.py`, shared by `SimBroker`, `PaperBroker`, and
-`LiveBroker`.
+`data/instruments/{exchange}/{symbol}.json`. Rounding lives in
+[`execution/precision.py`](../src/trading_platform/execution/precision.py),
+shared by `SimBroker` today and by `PaperBroker`/`LiveBroker` later.
 
-Configured via `config/backtest.yaml` (`spread_bps`, `latency_bars`,
-`volume_participation_rate`, `assume_maker_on_limit`, `use_next_bar_open`).
+An in-memory [`BacktestLedger`](../src/trading_platform/backtesting/ledger.py)
+(not the real, event-driven, persisted `PortfolioHandler` — that's Milestone
+6) tracks cash/positions/realized P&L from every fill, and is what
+`PassThroughRiskEngine` sizes against (`IPortfolioView`).
+
+Configured via `config/backtest.yaml` (`starting_cash`, `position_size_pct`,
+`spread_bps`, `latency_bars`, `volume_participation_rate`,
+`assume_maker_on_limit`, `use_next_bar_open`), which also selects the
+strategy to run (`strategy.path`/`strategy.params`) — run with
+`trading-platform backtest` (requires `download-data` to have been run first;
+never talks to an exchange itself).
 
 **Limitations (by design, documented rather than hidden):**
 - OHLCV-only data cannot reproduce true L2 order book dynamics — spread and
   partial fills are *approximations*.
 - Intrabar price path is unknown — a limit fill is assumed if the bar's
   high/low range crosses the limit price.
+- `BacktestLedger` never enforces cash sufficiency — sizing uses the
+  triggering bar's close, but the fill executes at a different bar's price
+  plus spread and fees, so cash can (rarely, with `position_size_pct` close
+  to `1.0`) go slightly negative. A real risk/position-sizing engine
+  (unscheduled future work) would size against a cash buffer instead.
 - Future upgrade path: tick/trade data feed for higher-fidelity simulation
   without changing the `FillSimulator` interface.
 

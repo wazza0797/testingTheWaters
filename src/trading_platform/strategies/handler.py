@@ -101,7 +101,9 @@ class StrategyHandler:
             # Same correlation_id as the triggering bar: one ID traces the
             # whole strategy -> risk -> execution chain for this signal.
             self._event_bus.publish(
-                SignalGenerated(signal=identified_signal, correlation_id=event.correlation_id)
+                SignalGenerated(
+                    signal=identified_signal, bar=bar, correlation_id=event.correlation_id
+                )
             )
 
     def stop(self) -> None:

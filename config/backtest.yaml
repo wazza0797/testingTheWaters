@@ -1,8 +1,19 @@
 # Backtest fill-simulation parameters (Milestone 4). Merged over default.yaml
 # when running `trading-platform backtest`.
 backtest:
-  spread_bps: 5                    # override; null = use instrument default
+  starting_cash: "10000"           # quoted: parsed as Decimal, not float
+  position_size_pct: 1.0           # fraction of equity risked per trade (long-only, no sizing module yet)
+  spread_bps: 5                    # flat override — no per-instrument spread source exists yet
   latency_bars: 1
   volume_participation_rate: 0.10  # max % of bar volume per partial fill
   assume_maker_on_limit: true      # limit orders default to maker if non-crossing
   use_next_bar_open: true          # fill price at next bar open (with latency)
+
+# Reference strategy run by `trading-platform backtest` — see
+# strategies/examples/sma_crossover.py. Swap `path`/`params` to backtest a
+# different strategy; no code changes required (strategies/loader.py).
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

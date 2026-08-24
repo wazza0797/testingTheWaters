@@ -5,17 +5,29 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from trading_platform.backtesting.broker_sim import SimBroker
+from trading_platform.backtesting.engine import BacktestEngine
+from trading_platform.backtesting.fill_simulator import FillSimulator
+from trading_platform.backtesting.ledger import BacktestLedger
+from trading_platform.backtesting.models.fee_model import FeeModel
+from trading_platform.backtesting.models.latency_model import LatencyModel
+from trading_platform.backtesting.models.partial_fill_model import PartialFillModel
+from trading_platform.backtesting.models.spread_model import SpreadModel
+from trading_platform.backtesting.order_queue import OrderQueue
 from trading_platform.config.loader import AppConfig
 from trading_platform.config.settings import Settings
+from trading_platform.domain.errors import ConfigurationError
 from trading_platform.domain.events.execution import FillReceived, OrderRejected
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.events.risk import OrderApproved, RiskRejected
 from trading_platform.domain.events.strategy import SignalGenerated
 from trading_platform.domain.events.system import Heartbeat
+from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.domain.ports.exchange import IExchangeAdapter
 from trading_platform.domain.ports.market_data import IMarketDataRepository
 from trading_platform.exchanges.binance.adapter import BinanceAdapter
+from trading_platform.execution.handler import ExecutionHandler
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.infrastructure.event_bus.timed import TimedEventBus
 from trading_platform.infrastructure.metrics.prometheus import PrometheusMetricsCollector
@@ -29,6 +41,12 @@ from trading_platform.observability.summary import (
     SummaryTrackingMetricsCollector,
 )
 from trading_platform.observability.system_monitor import SystemMonitor
+from trading_platform.risk.engine import PassThroughRiskEngine
+from trading_platform.risk.handler import RiskHandler
+from trading_platform.risk.sizing import EquityFractionSizer
+from trading_platform.strategies.context import DefaultStrategyContext
+from trading_platform.strategies.handler import StrategyHandler
+from trading_platform.strategies.loader import describe_strategy, instantiate_strategy
 
 # Every event type MetricsHandler translates into a throughput counter (see
 # docs/architecture.md metric catalog). Strategy/risk/execution/notification
@@ -109,4 +127,87 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
         market_data_repository=market_data_repository,
         instrument_rules_cache=instrument_rules_cache,
         data_ingest_service=data_ingest_service,
+    )
+
+
+@dataclass
+class BacktestRun:
+    """Everything the `backtest` CLI command needs to execute one run: a
+    fully-wired `BacktestEngine` (strategy -> risk -> execution already
+    subscribed on `container.event_bus`) plus the resolved symbol/timeframe
+    it was built for.
+    """
+
+    engine: BacktestEngine
+    strategy_handler: StrategyHandler
+    symbol: str
+    timeframe: str
+
+
+def build_backtest_engine(
+    container: AppContainer, instrument_rules: InstrumentRules
+) -> BacktestRun:
+    """Wire up one backtest run's strategy -> risk -> execution chain onto
+    `container.event_bus`, reusing the container's existing singletons
+    (event bus, config).
+
+    Split out from `build_container` because this wiring needs
+    `instrument_rules` — a cache/exchange round trip the caller
+    (`main.py`'s `backtest` command) performs, that `serve`/`download-data`
+    have no reason to pay for at every startup.
+    """
+    config = container.config
+    symbol = config.trading.symbol
+    timeframe = config.trading.timeframe
+    backtest_config = config.backtest
+
+    if config.strategy.path is None:
+        raise ConfigurationError(
+            "No strategy configured for backtesting — set 'strategy.path' "
+            "(and optionally 'strategy.params') in config/backtest.yaml. See "
+            "strategies/loader.py::load_strategy_class for the "
+            "'module:ClassName' path format."
+        )
+
+    ledger = BacktestLedger(starting_cash=backtest_config.starting_cash)
+    rules_by_symbol = {symbol: instrument_rules}
+
+    fill_simulator = FillSimulator(
+        spread_model=SpreadModel(backtest_config.spread_bps),
+        fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
+        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        use_next_bar_open=backtest_config.use_next_bar_open,
+    )
+    broker = SimBroker(
+        fill_simulator=fill_simulator,
+        order_queue=OrderQueue(latency_model=LatencyModel(backtest_config.latency_bars)),
+        instrument_rules=rules_by_symbol,
+    )
+
+    sizer = EquityFractionSizer(backtest_config.position_size_pct)
+    risk_engine = PassThroughRiskEngine(ledger, rules_by_symbol, sizer)
+    risk_handler = RiskHandler(risk_engine, container.event_bus)
+
+    execution_handler = ExecutionHandler(broker, rules_by_symbol, container.event_bus)
+
+    strategy = instantiate_strategy(config.strategy.path, config.strategy.params)
+    strategy_name = describe_strategy(config.strategy.path, symbol, config.strategy.params)
+    strategy_context = DefaultStrategyContext(
+        symbol=symbol,
+        timeframe=timeframe,
+        params=config.strategy.params,
+        position_provider=ledger,
+    )
+    strategy_handler = StrategyHandler(
+        strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name
+    )
+
+    container.event_bus.subscribe(BarClosed, strategy_handler)
+    container.event_bus.subscribe(SignalGenerated, risk_handler)
+    container.event_bus.subscribe(OrderApproved, execution_handler)
+
+    engine = BacktestEngine(container.event_bus, broker, ledger, symbol)
+
+    return BacktestRun(
+        engine=engine, strategy_handler=strategy_handler, symbol=symbol, timeframe=timeframe
     )
