@@ -4,7 +4,8 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestone 0 (Project Foundation) in progress. See
+> **Status:** Milestones 0–2 complete (foundation, historical data download,
+> indicator engine). No strategy, risk, or execution logic exists yet — see
 > [`docs/milestones/`](docs/milestones/) and the project plan for the full
 > roadmap.
 
