@@ -38,10 +38,16 @@ class BacktestConfig(BaseModel):
     real position-sizing module yet. `starting_cash` is `Decimal` (not
     `float`) so a YAML value like `"10000"` round-trips exactly; write it
     quoted in yaml to avoid `pyyaml` parsing it as a float first.
+
+    `cash_safety_buffer_pct` pads `PassThroughRiskEngine`'s cash-sufficiency
+    check (on top of the instrument's known taker fee rate) to cover the
+    spread/slippage a real fill may incur versus the signal-bar close it was
+    sized against — see `PassThroughRiskEngine._affordable_quantity`.
     """
 
     starting_cash: Decimal = Decimal("10000")
     position_size_pct: float = 1.0
+    cash_safety_buffer_pct: float = 0.001
     spread_bps: float = 5.0
     latency_bars: int = 1
     volume_participation_rate: float = 0.10

@@ -16,6 +16,8 @@ from trading_platform.config.settings import Settings
 from trading_platform.container import AppContainer, build_backtest_engine, build_container
 from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
+from trading_platform.domain.models.bar import Bar
+from trading_platform.market_data.gaps import find_gaps
 from trading_platform.utils.logging import configure_logging
 from trading_platform.utils.time import to_utc, utc_now
 
@@ -28,6 +30,33 @@ app = typer.Typer(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _warn_on_gaps(bars: list[Bar], timeframe: str) -> None:
+    """Print a warning (never fails the command) if `bars` has any stretches
+    spaced further apart than one `timeframe` interval — see
+    `market_data/gaps.py`. A silent gap in downloaded/backtested history can
+    quietly skew results without any indication anything is wrong, which is
+    exactly the kind of thing worth surfacing loudly instead.
+    """
+    gaps = find_gaps(bars, timeframe)
+    if not gaps:
+        return
+    total_missing = sum(gap.missing_count for gap in gaps)
+    typer.echo(
+        f"WARNING: {len(gaps)} gap(s) found in {timeframe} data "
+        f"(~{total_missing} missing bar(s) total). This can bias backtest results "
+        "— treat conclusions from this range with caution.",
+        err=True,
+    )
+    for gap in gaps[:10]:
+        typer.echo(
+            f"  gap: {gap.after.isoformat()} -> {gap.before.isoformat()} "
+            f"(~{gap.missing_count} missing bar(s))",
+            err=True,
+        )
+    if len(gaps) > 10:
+        typer.echo(f"  ... and {len(gaps) - 10} more gap(s).", err=True)
 
 
 def _load_logger_overrides() -> dict[str, str]:
@@ -154,6 +183,11 @@ def download_data(
         typer.echo(
             f"Done. {new_bars} new bar(s) persisted for {resolved_symbol}@{resolved_timeframe}."
         )
+
+        all_bars = list(
+            container.market_data_repository.load_bars(resolved_symbol, resolved_timeframe)
+        )
+        _warn_on_gaps(all_bars, resolved_timeframe)
     except TradingPlatformError as exc:
         typer.echo(f"Download failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -205,6 +239,8 @@ def backtest(
                 err=True,
             )
             raise typer.Exit(code=1)
+
+        _warn_on_gaps(bars, timeframe)
 
         run = build_backtest_engine(container, rules)
         typer.echo(

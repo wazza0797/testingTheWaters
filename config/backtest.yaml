@@ -3,6 +3,7 @@
 backtest:
   starting_cash: "10000"           # quoted: parsed as Decimal, not float
   position_size_pct: 1.0           # fraction of equity risked per trade (long-only, no sizing module yet)
+  cash_safety_buffer_pct: 0.001    # extra headroom (on top of taker fee) so 100% sizing can't overdraw cash
   spread_bps: 5                    # flat override — no per-instrument spread source exists yet
   latency_bars: 1
   volume_participation_rate: 0.10  # max % of bar volume per partial fill

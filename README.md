@@ -106,7 +106,12 @@ uv run trading-platform backtest
 ```
 
 Prints a trade-log/equity-curve summary (fills, ending cash/equity, total
-return, fees paid, final position) at the end of the run.
+return, fees paid, final position) at the end of the run. Both commands warn
+(without failing) if the loaded bars have any timestamp gaps, since a silent
+gap in historical data can otherwise bias backtest results — see
+`docs/architecture.md`'s Limitations/Risks sections for this and other
+backtesting biases worth being aware of (overfitting/data-snooping,
+point-in-time instrument rules, static spread assumptions).
 
 ## Paper vs Live Trading Safety
 
@@ -141,3 +146,11 @@ See [`docs/coding-standards.md`](docs/coding-standards.md) and
 Full milestone breakdown (goals, deliverables, tests, acceptance criteria) is
 tracked in the project plan and mirrored under
 [`docs/milestones/`](docs/milestones/) as each milestone lands.
+
+**Next up (planned, not yet implemented):**
+
+| Milestone | Focus |
+|-----------|-------|
+| [M4.5 — Backtest Validation & Realism](docs/milestones/m4.5-backtest-validation-and-realism.md) | Hold-out IS/OOS splits, volatility-aware spread, walk-forward optimization |
+| [M5 — Performance Analytics](docs/milestones/m5-performance-analytics.md) | Sharpe, drawdown, regime splits, statistical significance flags |
+| M6 — Paper Trading | Simulated live loop, `PortfolioHandler`, `AnalyticsHandler` wired |

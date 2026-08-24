@@ -380,23 +380,54 @@ An in-memory [`BacktestLedger`](../src/trading_platform/backtesting/ledger.py)
 6) tracks cash/positions/realized P&L from every fill, and is what
 `PassThroughRiskEngine` sizes against (`IPortfolioView`).
 
+`PassThroughRiskEngine` guards cash sufficiency: after `EquityFractionSizer`
+sizes a `BUY` against equity at the signal bar's close, `_affordable_quantity`
+shrinks it (never increases it) so its worst-case cost — price padded by the
+instrument's `taker_fee_rate` plus `config.backtest.cash_safety_buffer_pct`
+— never exceeds actual cash on hand, closing the gap where the real fill
+(later bar, spread-adjusted price, fee) could otherwise cost more than the
+signal-time estimate. Rejected outright (`RiskRejected`, "insufficient cash")
+if nothing affordable remains.
+
+`main.py`'s `download-data` and `backtest` commands both scan loaded bars
+with [`market_data/gaps.py`](../src/trading_platform/market_data/gaps.py)
+and print a warning (never a hard failure) if any stretch is spaced further
+apart than one timeframe interval — a silent gap (exchange downtime, rate
+limiting) can otherwise skew a backtest's results without any indication
+anything is wrong.
+
 Configured via `config/backtest.yaml` (`starting_cash`, `position_size_pct`,
-`spread_bps`, `latency_bars`, `volume_participation_rate`,
-`assume_maker_on_limit`, `use_next_bar_open`), which also selects the
-strategy to run (`strategy.path`/`strategy.params`) — run with
-`trading-platform backtest` (requires `download-data` to have been run first;
-never talks to an exchange itself).
+`cash_safety_buffer_pct`, `spread_bps`, `latency_bars`,
+`volume_participation_rate`, `assume_maker_on_limit`, `use_next_bar_open`),
+which also selects the strategy to run (`strategy.path`/`strategy.params`) —
+run with `trading-platform backtest` (requires `download-data` to have been
+run first; never talks to an exchange itself).
 
 **Limitations (by design, documented rather than hidden):**
 - OHLCV-only data cannot reproduce true L2 order book dynamics — spread and
   partial fills are *approximations*.
 - Intrabar price path is unknown — a limit fill is assumed if the bar's
   high/low range crosses the limit price.
-- `BacktestLedger` never enforces cash sufficiency — sizing uses the
-  triggering bar's close, but the fill executes at a different bar's price
-  plus spread and fees, so cash can (rarely, with `position_size_pct` close
-  to `1.0`) go slightly negative. A real risk/position-sizing engine
-  (unscheduled future work) would size against a cash buffer instead.
+- `InstrumentRules` is a single current snapshot (with a TTL cache, not a
+  historical record) fetched from the exchange's *live* API — a backtest
+  over 2020 data still validates/rounds/fees orders against 2026's tick
+  size, step size, and fee schedule. Minor for BTC/USDT specifically (these
+  have been fairly stable), but a real residual look-ahead if applied to an
+  instrument whose rules changed materially over the backtested range.
+  Point-in-time rule versioning is unscheduled future work.
+- No train/test split or walk-forward analysis exists yet — a single
+  `backtest` run replays one full date range once. Repeatedly re-running
+  and hand-tuning `strategy.params` against the same full history is
+  classic data-snooping/overfitting; until M4.5 validation lands
+  ([`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md)),
+  treat any one full-history result with appropriate skepticism, and
+  preferably hold out a final date range you don't touch until the very end.
+- Static, volatility-independent spread (`spread_bps`) and a volume-capped
+  but always-available partial-fill model — both tend to be *more*
+  optimistic than reality during exactly the moments (news, flash crashes)
+  where real spread widens and real liquidity vanishes. Volatility-aware
+  spread is planned for M4.5 Phase B
+  ([`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md)).
 - Future upgrade path: tick/trade data feed for higher-fidelity simulation
   without changing the `FillSimulator` interface.
 
@@ -501,9 +532,28 @@ Prometheus server scrapes `/metrics` (Milestone 9).
 | Side-effect handler failure | Missed notification | Never let `NotificationHandler` block `ExecutionHandler` |
 | Metrics overhead in hot path | Slower backtest | `TimedEventBus` is a thin wrapper; disable via `observability.enabled: false` |
 | Over-engineering early | Slow delivery | In-memory sync bus only; no external broker until multi-process need |
+| Cash-sufficiency gap (100% sizing overdraws cash) | Ledger cash goes negative | `PassThroughRiskEngine._affordable_quantity` caps order size by cash + fee/spread buffer (M4) |
+| Silent gaps in downloaded/backtested bars | Misleading equity curve | `market_data/gaps.py` scan + CLI warning on `download-data`/`backtest` (M4) |
+| Overfitting / data-snooping (one full-history backtest, hand-tuned params) | Strategy looks good in-sample, fails live | M4.5 hold-out + walk-forward ([`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md)); interim: hold out an untouched date range |
+| Point-in-time instrument rules (current snapshot applied to historical bars) | Rules mismatch for older/changed instruments | Documented limitation; acceptable for BTC/USDT today, versioned rules unscheduled future work |
 
 ## Roadmap
 
 Full milestone breakdown (goals, deliverables, tests, acceptance criteria) is
 tracked in the project plan and mirrored under [`docs/milestones/`](milestones/)
 as each milestone lands.
+
+| Milestone | Status | Doc |
+|-----------|--------|-----|
+| M0 — Foundation | Complete | [`m0-foundation.md`](milestones/m0-foundation.md) |
+| M1 — Historical Data | Complete | [`m1-historical-data.md`](milestones/m1-historical-data.md) |
+| M2 — Indicator Engine | Complete | [`m2-indicator-engine.md`](milestones/m2-indicator-engine.md) |
+| M3 — Strategy Engine | Complete | [`m3-strategy-engine.md`](milestones/m3-strategy-engine.md) |
+| M4 — Backtesting Engine | Complete | [`m4-backtesting-engine.md`](milestones/m4-backtesting-engine.md) |
+| M4.5 — Backtest Validation & Realism | Planned | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread, walk-forward |
+| M5 — Performance Analytics | Planned | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
+| M6 — Paper Trading | Planned | — |
+| M7+ — Notifications, Live, Docker | Planned | — |
+
+**Recommended build order after M4:** M4.5 Phase A (hold-out) → M4.5 Phase B
+(vol spread) → M5 (analytics) → M4.5 Phase C (walk-forward, needs M5 metrics).

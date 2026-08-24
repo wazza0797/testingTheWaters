@@ -24,11 +24,19 @@ class IPositionProvider(Protocol):
 
 class IPortfolioView(IPositionProvider, Protocol):
     """What `risk/engine.py::PassThroughRiskEngine` needs to size a `Signal`
-    into an `Order`: current positions (inherited from `IPositionProvider`)
-    plus total account equity. Structurally, `domain/models/portfolio.py`'s
-    `Portfolio` already has exactly this shape; `backtesting.ledger.BacktestLedger`
-    is the first mutable, stateful implementation (M6's real `PortfolioHandler`
-    will be the second).
+    into an `Order`: current positions (inherited from `IPositionProvider`),
+    total account equity, and raw available cash. Structurally,
+    `domain/models/portfolio.py`'s `Portfolio` already has exactly this
+    shape; `backtesting.ledger.BacktestLedger` is the first mutable, stateful
+    implementation (M6's real `PortfolioHandler` will be the second).
+
+    `cash` is distinct from `equity`: sizing a `BUY` against equity (cash +
+    mark-to-market of any open positions) is the sizing *policy*, but
+    affording the resulting order is strictly a function of raw `cash` — see
+    `PassThroughRiskEngine`'s cash-sufficiency guard.
     """
+
+    @property
+    def cash(self) -> Decimal: ...
 
     def equity(self, mark_prices: Mapping[str, Decimal]) -> Decimal: ...

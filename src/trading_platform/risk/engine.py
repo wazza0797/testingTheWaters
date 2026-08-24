@@ -11,6 +11,7 @@ from trading_platform.domain.models.position import Position
 from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.domain.ports.portfolio import IPortfolioView
 from trading_platform.domain.ports.risk import IPendingOrderTracker, RiskDecision
+from trading_platform.execution.precision import round_qty
 from trading_platform.risk.sizing import EquityFractionSizer
 
 # Placeholder, always overwritten by RiskHandler with the triggering event's
@@ -31,7 +32,11 @@ class PassThroughRiskEngine:
     - `SELL`/`CLOSE` while flat: rejected — nothing to close.
     - `BUY` while flat: sized via `EquityFractionSizer` against current
       equity and the triggering bar's close (`Signal` has no price of its
-      own — see `SignalGenerated.bar`).
+      own — see `SignalGenerated.bar`), then shrunk if needed so its
+      worst-case cost (fee plus a safety buffer for the spread/slippage the
+      *actual* fill may incur once latency elapses) never exceeds available
+      cash — see `_affordable_quantity`. Rejected outright if that leaves
+      nothing affordable.
     - `SELL`/`CLOSE` while holding a position: closes the *entire* position
       (no partial-reduce policy exists yet).
     - **Any** signal while an earlier order for the same symbol is still
@@ -55,11 +60,13 @@ class PassThroughRiskEngine:
         instrument_rules: Mapping[str, InstrumentRules],
         sizer: EquityFractionSizer,
         pending_orders: IPendingOrderTracker,
+        cash_safety_buffer_pct: float = 0.001,
     ) -> None:
         self._portfolio = portfolio
         self._instrument_rules = instrument_rules
         self._sizer = sizer
         self._pending_orders = pending_orders
+        self._cash_safety_buffer_pct = Decimal(str(cash_safety_buffer_pct))
 
     def evaluate(self, signal: Signal, bar: Bar) -> RiskDecision:
         rules = self._instrument_rules.get(signal.symbol)
@@ -111,9 +118,44 @@ class PassThroughRiskEngine:
                 ),
             )
 
+        affordable_quantity = self._affordable_quantity(quantity, price, rules)
+        if affordable_quantity <= 0:
+            return RiskDecision(
+                order=None,
+                rejection_reason=(
+                    f"insufficient cash for {signal.symbol}: available cash="
+                    f"{self._portfolio.cash} cannot cover even the minimum fillable "
+                    f"quantity at price={price} after fees/safety buffer"
+                ),
+            )
+
         return RiskDecision(
-            order=self._build_order(signal, bar, OrderSide.BUY, quantity), rejection_reason=None
+            order=self._build_order(signal, bar, OrderSide.BUY, affordable_quantity),
+            rejection_reason=None,
         )
+
+    def _affordable_quantity(
+        self, quantity: Decimal, price: Decimal, rules: InstrumentRules
+    ) -> Decimal:
+        """Shrinks `quantity` (never increases it) so its worst-case cost never
+        exceeds available cash.
+
+        `EquityFractionSizer.size` sizes against *equity* at the signal bar's
+        close — but the real fill lands on a *later* bar (see `LatencyModel`)
+        at a worse price (`FillSimulator` applies spread) and always pays a
+        fee. Sizing 100% of equity at the signal price alone can therefore
+        leave `BacktestLedger.apply_fill` short of cash once the real,
+        slightly-more-expensive fill lands (the cash-sufficiency gap
+        documented in `docs/architecture.md`). Padding the reference price by
+        `rules.taker_fee_rate` (worst-case fee) plus `cash_safety_buffer_pct`
+        (a margin for spread/slippage) closes that gap without needing this
+        engine to depend on `backtesting`'s fill-simulation models directly.
+        """
+        worst_case_unit_cost = price * (1 + self._cash_safety_buffer_pct + rules.taker_fee_rate)
+        if worst_case_unit_cost <= 0:
+            return Decimal("0")
+        max_affordable = self._portfolio.cash / worst_case_unit_cost
+        return round_qty(min(quantity, max_affordable), rules)
 
     def _evaluate_close(self, signal: Signal, bar: Bar, position: Position | None) -> RiskDecision:
         if position is None or position.is_flat:

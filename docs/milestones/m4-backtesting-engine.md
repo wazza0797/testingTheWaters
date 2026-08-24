@@ -220,23 +220,58 @@ CLI wiring, not just the individual units, works.
 | Trade log + equity curve produced | ✅ | `BacktestResult.fills`/`.equity_curve` — `tests/unit/backtesting/test_engine.py` |
 | CLI runs a full backtest | ✅ | `trading-platform backtest` — smoke-tested against real downloaded data (see Verification); `tests/integration/test_backtest_engine_integration.py` runs the real container + real `SmaCrossoverStrategy` config through a synthetic golden-cross/death-cross series with zero network access |
 | Every module unit tested | ✅ | New/changed modules: `risk/sizing.py`, `risk/engine.py`, `risk/handler.py`, `execution/order_validator.py`, `execution/handler.py`, `backtesting/ledger.py`, `backtesting/models/*.py`, `backtesting/order_queue.py`, `backtesting/fill_simulator.py`, `backtesting/broker_sim.py`, `backtesting/engine.py`, `application/trading_loop.py` — all with dedicated `tests/unit/.../test_*.py` files |
-| `uv run pytest -m "not network"` passes | ✅ | 410 passed (see Bugbot addendum below for the +15 added during review) |
+| `uv run pytest -m "not network"` passes | ✅ | 437 passed total (see Bugbot addendum below and the Backtesting Robustness Follow-Up addendum above for what was added after initial merge) |
 | `uv run mypy src` / `ruff check .` / `ruff format --check .` | ✅ | all clean |
+
+## Addendum: Backtesting Robustness Follow-Up
+
+Prompted by the user asking how to further avoid common backtesting pitfalls
+(look-ahead, overfitting, cash-sufficiency, data gaps, etc.) after M4 shipped.
+Three concrete, scoped fixes were made (full discussion + remaining,
+unscheduled items now live in `docs/architecture.md` §7's Limitations and the
+Risks & Mitigations table):
+
+1. **Cash-sufficiency guard (closes the gap below).**
+   `PassThroughRiskEngine._affordable_quantity` now shrinks a sized `BUY`
+   (never increases it) so its worst-case cost — price padded by the
+   instrument's `taker_fee_rate` plus a new `config.backtest.cash_safety_buffer_pct`
+   (default `0.001`) — never exceeds actual cash on hand (`IPortfolioView.cash`,
+   a new protocol member; `BacktestLedger` already exposed it). Rejected
+   outright ("insufficient cash") if nothing affordable remains. Tests:
+   `tests/unit/risk/test_engine.py::TestCashSufficiencyGuard`.
+2. **Silent data-gap detection.** New
+   [`market_data/timeframe.py`](../../src/trading_platform/market_data/timeframe.py)
+   (parses `"1h"`/`"4h"`/etc. into a `timedelta`) and
+   [`market_data/gaps.py`](../../src/trading_platform/market_data/gaps.py)
+   (`find_gaps`) scan chronologically-sorted bars for stretches wider than one
+   timeframe interval. Wired into both `download-data` (full stored range,
+   post-sync) and `backtest` (the loaded range, pre-run) as a non-fatal CLI
+   warning — a gap doesn't necessarily mean bad data, but a *silent* one in
+   backtest input can skew results for reasons that have nothing to do with
+   the strategy. Tests: `tests/unit/market_data/test_timeframe.py`,
+   `tests/unit/market_data/test_gaps.py`.
+3. **Documented, not code-fixed: point-in-time instrument rules and
+   overfitting/data-snooping risk.** `InstrumentRules` is a single current
+   snapshot (TTL-cached, not versioned) — a backtest over old data still
+   validates against today's tick size/fees. And a single full-history
+   `backtest` run with no train/test split or walk-forward validation makes
+   repeated hand-tuning of `strategy.params` classic data-snooping. Both are
+   real, but neither is a quick fix — see
+   [`m4.5-backtest-validation-and-realism.md`](m4.5-backtest-validation-and-realism.md)
+   and [`m5-performance-analytics.md`](m5-performance-analytics.md) for the
+   planned mitigation; hold out an untouched date range in the meantime.
 
 ## Known Gaps (by design — later milestones)
 
-- **No cash sufficiency check.** `BacktestLedger` never rejects a fill for
-  insufficient cash. Sizing uses the signal-triggering bar's close, but the
-  fill executes at a different bar's price plus spread and fees, so with
-  `position_size_pct` at/near `1.0` cash can go slightly negative. A real
-  position-sizing/risk engine (unscheduled future work) would size against a
-  cash buffer instead of raw equity.
 - **Single-symbol only.** `SimBroker`/`BacktestEngine` assume one
   symbol/timeframe per run (matching `config.trading.symbol`/`.timeframe`) —
   multi-symbol backtesting is unscheduled future work.
 - **No performance analytics.** `BacktestResult` intentionally stops at the
   trade log and equity curve — Sharpe ratio, max drawdown, win rate, etc. are
-  Milestone 5's `analytics/`.
+  [`m5-performance-analytics.md`](m5-performance-analytics.md).
+- **No hold-out / walk-forward validation.** Single full-history runs only —
+  see [`m4.5-backtest-validation-and-realism.md`](m4.5-backtest-validation-and-realism.md).
+- **Static spread model.** Volatility-aware spread planned for M4.5 Phase B.
 - **`PassThroughRiskEngine` has no real risk rules** (max position size,
   drawdown halt, correlation limits) — see its docstring; these are
   unscheduled future work behind the same `IRiskEngine` seam.
