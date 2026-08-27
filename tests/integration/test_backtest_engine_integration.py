@@ -66,6 +66,27 @@ class TestBacktestEngineIntegration:
         # subsequent death cross should have closed it back out.
         assert len(result.fills) >= 1
 
+    def test_build_backtest_engine_honours_symbol_and_timeframe_overrides(
+        self, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        settings = Settings(_env_file=None)
+        config = load_config(config_dir=Path("config"), overlay="backtest")
+        container = build_container(settings, config)
+
+        run = build_backtest_engine(
+            container,
+            btc_usdt_instrument_rules,
+            symbol="ETH/USDT",
+            timeframe="4h",
+        )
+        try:
+            assert run.symbol == "ETH/USDT"
+            assert run.timeframe == "4h"
+            assert run.symbol != config.trading.symbol or config.trading.symbol == "ETH/USDT"
+            assert config.trading.timeframe == "1h"  # config unchanged; override is per-run
+        finally:
+            run.teardown()
+
     def test_full_pipeline_publishes_the_expected_event_sequence_types(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules
     ) -> None:

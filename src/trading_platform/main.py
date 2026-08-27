@@ -21,6 +21,7 @@ from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.market_data.gaps import find_gaps
+from trading_platform.market_data.timeframe import timeframe_to_timedelta
 from trading_platform.utils.logging import configure_logging
 from trading_platform.utils.time import to_utc, utc_now
 
@@ -210,9 +211,14 @@ def _print_backtest_result(title: str, result: BacktestResult) -> None:
 
 
 def _run_single_backtest(
-    container: AppContainer, rules: InstrumentRules, bars: list[Bar], timeframe: str
+    container: AppContainer,
+    rules: InstrumentRules,
+    bars: list[Bar],
+    *,
+    symbol: str,
+    timeframe: str,
 ) -> None:
-    run = build_backtest_engine(container, rules)
+    run = build_backtest_engine(container, rules, symbol=symbol, timeframe=timeframe)
     typer.echo(
         f"Backtesting {run.symbol}@{run.timeframe} over {len(bars)} bar(s) "
         f"({bars[0].timestamp.isoformat()} -> {bars[-1].timestamp.isoformat()})..."
@@ -225,7 +231,12 @@ def _run_single_backtest(
 
 
 def _run_hold_out_backtest(
-    container: AppContainer, rules: InstrumentRules, bars: list[Bar], timeframe: str
+    container: AppContainer,
+    rules: InstrumentRules,
+    bars: list[Bar],
+    *,
+    symbol: str,
+    timeframe: str,
 ) -> None:
     validation = container.config.validation
     assert validation.train_end is not None and validation.test_start is not None
@@ -245,7 +256,9 @@ def _run_hold_out_backtest(
         + (f" and < {test_end.isoformat()}" if test_end else "")
     )
 
-    validator = HoldOutValidator(lambda: build_backtest_engine(container, rules))
+    validator = HoldOutValidator(
+        lambda: build_backtest_engine(container, rules, symbol=symbol, timeframe=timeframe)
+    )
     hold_out = validator.run(
         bars,
         timeframe,
@@ -260,6 +273,12 @@ def _run_hold_out_backtest(
 
 @app.command()
 def backtest(
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="e.g. BTC/USDT (default: config trading.symbol)"
+    ),
+    timeframe: str | None = typer.Option(
+        None, "--timeframe", help="e.g. 1h, 4h, 1d (default: config trading.timeframe)"
+    ),
     start: str | None = typer.Option(
         None, "--start", help="ISO date/datetime to start from (default: earliest cached bar)."
     ),
@@ -275,18 +294,21 @@ def backtest(
     in-sample then out-of-sample hold-out and prints both summaries.
 
     Requires `trading-platform download-data` to have been run first for the
-    configured symbol/timeframe — this command never talks to an exchange.
+    chosen symbol/timeframe — this command never talks to an exchange.
     """
     container = _bootstrap(overlay="backtest")
-    symbol = container.config.trading.symbol
-    timeframe = container.config.trading.timeframe
+    resolved_symbol = symbol or container.config.trading.symbol
+    resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
 
     try:
-        rules = container.instrument_rules_cache.load(exchange_name, symbol)
+        if timeframe is not None:
+            timeframe_to_timedelta(resolved_timeframe)  # validate early (e.g. reject "1x")
+
+        rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
         if rules is None:
             typer.echo(
-                f"No cached instrument rules for {symbol} on {exchange_name}. "
+                f"No cached instrument rules for {resolved_symbol} on {exchange_name}. "
                 "Run 'trading-platform download-data' first.",
                 err=True,
             )
@@ -299,21 +321,38 @@ def backtest(
             typer.echo(f"Invalid --start/--end value: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-        bars = list(container.market_data_repository.load_bars(symbol, timeframe, start_dt, end_dt))
+        bars = list(
+            container.market_data_repository.load_bars(
+                resolved_symbol, resolved_timeframe, start_dt, end_dt
+            )
+        )
         if not bars:
             typer.echo(
-                f"No cached bars for {symbol}@{timeframe} in the requested range. "
-                "Run 'trading-platform download-data' first.",
+                f"No cached bars for {resolved_symbol}@{resolved_timeframe} in the "
+                "requested range. Run 'trading-platform download-data' first "
+                f"(e.g. --symbol {resolved_symbol} --timeframe {resolved_timeframe}).",
                 err=True,
             )
             raise typer.Exit(code=1)
 
-        _warn_on_gaps(bars, timeframe)
+        _warn_on_gaps(bars, resolved_timeframe)
 
         if container.config.validation.enabled:
-            _run_hold_out_backtest(container, rules, bars, timeframe)
+            _run_hold_out_backtest(
+                container,
+                rules,
+                bars,
+                symbol=resolved_symbol,
+                timeframe=resolved_timeframe,
+            )
         else:
-            _run_single_backtest(container, rules, bars, timeframe)
+            _run_single_backtest(
+                container,
+                rules,
+                bars,
+                symbol=resolved_symbol,
+                timeframe=resolved_timeframe,
+            )
     except TradingPlatformError as exc:
         typer.echo(f"Backtest failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc

@@ -158,7 +158,11 @@ class BacktestRun:
 
 
 def build_backtest_engine(
-    container: AppContainer, instrument_rules: InstrumentRules
+    container: AppContainer,
+    instrument_rules: InstrumentRules,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
 ) -> BacktestRun:
     """Wire up one backtest run's strategy -> risk -> execution chain onto
     `container.event_bus`, reusing the container's existing singletons
@@ -169,12 +173,15 @@ def build_backtest_engine(
     (`main.py`'s `backtest` command) performs, that `serve`/`download-data`
     have no reason to pay for at every startup.
 
+    `symbol` / `timeframe` default to `config.trading.*` but may be overridden
+    by CLI flags on `trading-platform backtest` without editing YAML.
+
     Safe to call more than once on the same container (e.g. hold-out IS then
     OOS) as long as each prior `BacktestRun` has been `teardown()`'d first.
     """
     config = container.config
-    symbol = config.trading.symbol
-    timeframe = config.trading.timeframe
+    symbol = symbol or config.trading.symbol
+    timeframe = timeframe or config.trading.timeframe
     backtest_config = config.backtest
 
     if config.strategy.path is None:

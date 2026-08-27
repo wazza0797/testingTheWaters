@@ -99,10 +99,13 @@ for the full design.
 ```bash
 # 1. Download historical data + instrument rules first (never done by `backtest` itself)
 uv run trading-platform download-data --days 365
+# other timeframes: --timeframe 4h / 15m / 1d (data is stored per timeframe)
 
 # 2. Select a strategy and tune fill-simulation parameters in config/backtest.yaml,
-#    then run the backtest
+#    then run the backtest (optional overrides — defaults come from config)
 uv run trading-platform backtest
+uv run trading-platform backtest --timeframe 4h --start 2024-01-01 --end 2025-01-01
+uv run trading-platform backtest --symbol BTC/USDT --timeframe 1d
 ```
 
 Prints a trade-log/equity-curve summary (fills, ending cash/equity, total
@@ -112,6 +115,10 @@ gap in historical data can otherwise bias backtest results — see
 `docs/architecture.md`'s Limitations/Risks sections for this and other
 backtesting biases worth being aware of (overfitting/data-snooping,
 point-in-time instrument rules, static spread assumptions).
+
+`--symbol` / `--timeframe` override `config/default.yaml` for that run only
+(you still need matching cached data from `download-data`). `--start` /
+`--end` bound the calendar window.
 
 ## Paper vs Live Trading Safety
 
