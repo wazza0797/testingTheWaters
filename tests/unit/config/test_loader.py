@@ -83,6 +83,27 @@ class TestLoadConfig:
 
         assert config.backtest.starting_cash == Decimal("10000")
         assert config.backtest.spread_bps == 5
+        assert config.backtest.spread_volatility_k == 0.0
+        assert config.validation.enabled is False
+
+    def test_validation_enabled_requires_train_and_test_dates(self, tmp_path: Path) -> None:
+        (tmp_path / "default.yaml").write_text("validation:\n  enabled: true\n")
+
+        with pytest.raises(Exception, match="train_end"):
+            load_config(config_dir=tmp_path)
+
+    def test_validation_hold_out_dates_parse_from_yaml(self, tmp_path: Path) -> None:
+        (tmp_path / "default.yaml").write_text(
+            'validation:\n  enabled: true\n  train_end: "2025-01-01"\n  test_start: "2025-01-01"\n'
+        )
+
+        config = load_config(config_dir=tmp_path)
+
+        assert config.validation.enabled is True
+        assert config.validation.train_end is not None
+        assert config.validation.train_end.year == 2025
+        assert config.validation.test_start is not None
+        assert config.validation.test_start.year == 2025
 
     def test_backtest_starting_cash_parses_exactly_from_a_quoted_yaml_string(
         self, tmp_path: Path

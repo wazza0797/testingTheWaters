@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from trading_platform.domain.errors import ConfigurationError
 
@@ -30,6 +31,36 @@ class StrategyConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ValidationConfig(BaseModel):
+    """Hold-out train/test split for backtesting (Milestone 4.5 Phase A).
+
+    When `enabled`, `trading-platform backtest` runs the strategy twice —
+    in-sample (`timestamp < train_end`) and out-of-sample
+    (`timestamp >= test_start`, optionally `< test_end`) — and prints both
+    summaries. OOS is the only result that counts for validation.
+
+    Dates are ISO-8601; naive values are treated as UTC (same as CLI
+    `--start`/`--end`). A gap between `train_end` and `test_start` is an
+    allowed embargo period for indicator warmup.
+    """
+
+    enabled: bool = False
+    train_end: datetime | None = None
+    test_start: datetime | None = None
+    test_end: datetime | None = None
+
+    @model_validator(mode="after")
+    def _require_dates_when_enabled(self) -> ValidationConfig:
+        if not self.enabled:
+            return self
+        if self.train_end is None or self.test_start is None:
+            raise ValueError(
+                "validation.train_end and validation.test_start are required "
+                "when validation.enabled is true"
+            )
+        return self
+
+
 class BacktestConfig(BaseModel):
     """Simulation parameters for the backtest engine (Milestone 4).
 
@@ -43,12 +74,18 @@ class BacktestConfig(BaseModel):
     check (on top of the instrument's known taker fee rate) to cover the
     spread/slippage a real fill may incur versus the signal-bar close it was
     sized against — see `PassThroughRiskEngine._affordable_quantity`.
+
+    `spread_volatility_k` (default `0` = off) adds ATR-scaled width on top of
+    `spread_bps` so fills are more expensive in volatile regimes — see
+    `backtesting/models/spread_model.py` and Milestone 4.5 Phase B.
     """
 
     starting_cash: Decimal = Decimal("10000")
     position_size_pct: float = 1.0
     cash_safety_buffer_pct: float = 0.001
     spread_bps: float = 5.0
+    spread_volatility_k: float = 0.0
+    spread_atr_period: int = 14
     latency_bars: int = 1
     volume_participation_rate: float = 0.10
     assume_maker_on_limit: bool = True
@@ -72,6 +109,7 @@ class AppConfig(BaseModel):
     trading: TradingConfig = Field(default_factory=TradingConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+    validation: ValidationConfig = Field(default_factory=ValidationConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
 

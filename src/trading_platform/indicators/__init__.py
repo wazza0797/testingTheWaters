@@ -9,17 +9,20 @@ accounted for. `Bar`/`Order`/`Fill` etc. remain `Decimal` everywhere else.
 
 from __future__ import annotations
 
+from trading_platform.indicators.atr import compute_atr
 from trading_platform.indicators.ema import compute_ema
 from trading_platform.indicators.registry import IndicatorRegistry, build_default_registry
 from trading_platform.indicators.rsi import compute_rsi
 from trading_platform.indicators.sma import compute_sma
-from trading_platform.indicators.utils import closes_from_bars
+from trading_platform.indicators.utils import closes_from_bars, ohlc_from_bars
 
 __all__ = [
     "IndicatorRegistry",
     "build_default_registry",
     "closes_from_bars",
+    "compute_atr",
     "compute_ema",
     "compute_rsi",
     "compute_sma",
+    "ohlc_from_bars",
 ]

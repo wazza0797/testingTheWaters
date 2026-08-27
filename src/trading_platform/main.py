@@ -11,12 +11,15 @@ import uvicorn
 import yaml
 
 from trading_platform import __version__
+from trading_platform.backtesting.result import BacktestResult
+from trading_platform.backtesting.validation import HoldOutValidator
 from trading_platform.config.loader import load_config
 from trading_platform.config.settings import Settings
 from trading_platform.container import AppContainer, build_backtest_engine, build_container
 from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.models.bar import Bar
+from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.market_data.gaps import find_gaps
 from trading_platform.utils.logging import configure_logging
 from trading_platform.utils.time import to_utc, utc_now
@@ -193,6 +196,68 @@ def download_data(
         raise typer.Exit(code=1) from exc
 
 
+def _print_backtest_result(title: str, result: BacktestResult) -> None:
+    typer.echo("")
+    typer.echo(f"=== {title} ===")
+    typer.echo(f"Bars processed:     {result.bars_processed}")
+    typer.echo(f"Fills:              {len(result.fills)}")
+    typer.echo(f"Starting cash:      {result.starting_cash}")
+    typer.echo(f"Ending cash:        {result.ending_cash}")
+    typer.echo(f"Ending equity:      {result.ending_equity}")
+    typer.echo(f"Total return:       {result.total_return_pct:.2f}%")
+    typer.echo(f"Total fees paid:    {result.total_fees_paid}")
+    typer.echo(f"Final position:     {result.final_position}")
+
+
+def _run_single_backtest(
+    container: AppContainer, rules: InstrumentRules, bars: list[Bar], timeframe: str
+) -> None:
+    run = build_backtest_engine(container, rules)
+    typer.echo(
+        f"Backtesting {run.symbol}@{run.timeframe} over {len(bars)} bar(s) "
+        f"({bars[0].timestamp.isoformat()} -> {bars[-1].timestamp.isoformat()})..."
+    )
+    try:
+        result = run.engine.run(bars, timeframe)
+    finally:
+        run.teardown()
+    _print_backtest_result("Backtest Result", result)
+
+
+def _run_hold_out_backtest(
+    container: AppContainer, rules: InstrumentRules, bars: list[Bar], timeframe: str
+) -> None:
+    validation = container.config.validation
+    assert validation.train_end is not None and validation.test_start is not None
+
+    train_end = to_utc(validation.train_end)
+    test_start = to_utc(validation.test_start)
+    test_end = to_utc(validation.test_end) if validation.test_end is not None else None
+
+    typer.echo(
+        "Hold-out validation enabled — running in-sample then out-of-sample.\n"
+        "OOS results are the only ones that count for strategy validation; "
+        "IS is for tuning only."
+    )
+    typer.echo(
+        f"IS:  timestamp < {train_end.isoformat()}  |  "
+        f"OOS: timestamp >= {test_start.isoformat()}"
+        + (f" and < {test_end.isoformat()}" if test_end else "")
+    )
+
+    validator = HoldOutValidator(lambda: build_backtest_engine(container, rules))
+    hold_out = validator.run(
+        bars,
+        timeframe,
+        train_end=train_end,
+        test_start=test_start,
+        test_end=test_end,
+    )
+
+    _print_backtest_result("In-Sample (tuning only)", hold_out.is_result)
+    _print_backtest_result("Out-of-Sample (validation)", hold_out.oos_result)
+
+
 @app.command()
 def backtest(
     start: str | None = typer.Option(
@@ -204,7 +269,10 @@ def backtest(
 ) -> None:
     """Replay cached historical bars through strategy -> risk -> execution
     with realistic simulated fills, and print the resulting trade log summary
-    and equity curve (Milestone 4).
+    and equity curve (Milestone 4 / 4.5).
+
+    When `validation.enabled` is true in config/backtest.yaml, runs an
+    in-sample then out-of-sample hold-out and prints both summaries.
 
     Requires `trading-platform download-data` to have been run first for the
     configured symbol/timeframe — this command never talks to an exchange.
@@ -242,25 +310,10 @@ def backtest(
 
         _warn_on_gaps(bars, timeframe)
 
-        run = build_backtest_engine(container, rules)
-        typer.echo(
-            f"Backtesting {run.symbol}@{run.timeframe} over {len(bars)} bar(s) "
-            f"({bars[0].timestamp.isoformat()} -> {bars[-1].timestamp.isoformat()})..."
-        )
-
-        result = run.engine.run(bars, timeframe)
-        run.strategy_handler.stop()
-
-        typer.echo("")
-        typer.echo("=== Backtest Result ===")
-        typer.echo(f"Bars processed:     {result.bars_processed}")
-        typer.echo(f"Fills:              {len(result.fills)}")
-        typer.echo(f"Starting cash:      {result.starting_cash}")
-        typer.echo(f"Ending cash:        {result.ending_cash}")
-        typer.echo(f"Ending equity:      {result.ending_equity}")
-        typer.echo(f"Total return:       {result.total_return_pct:.2f}%")
-        typer.echo(f"Total fees paid:    {result.total_fees_paid}")
-        typer.echo(f"Final position:    {result.final_position}")
+        if container.config.validation.enabled:
+            _run_hold_out_backtest(container, rules, bars, timeframe)
+        else:
+            _run_single_backtest(container, rules, bars, timeframe)
     except TradingPlatformError as exc:
         typer.echo(f"Backtest failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc

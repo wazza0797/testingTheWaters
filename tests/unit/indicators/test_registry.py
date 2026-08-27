@@ -48,16 +48,20 @@ class TestIndicatorRegistry:
 class TestBuildDefaultRegistry:
     def test_contains_all_milestone_two_indicators(self) -> None:
         registry = build_default_registry()
-        assert registry.available() == ["ema", "rsi", "sma"]
+        assert registry.available() == ["atr", "ema", "rsi", "sma"]
 
     def test_each_registered_indicator_is_callable_end_to_end(self) -> None:
         registry = build_default_registry()
         closes = pd.Series([float(i) for i in range(1, 30)])
+        high = closes + 1.0
+        low = closes - 1.0
 
         sma_result = registry.compute("sma", closes, period=5)
         ema_result = registry.compute("ema", closes, period=5)
         rsi_result = registry.compute("rsi", closes, period=14)
+        atr_result = registry.compute("atr", closes, high=high, low=low, period=14)
 
         assert not math.isnan(sma_result.iloc[-1])
         assert not math.isnan(ema_result.iloc[-1])
         assert not math.isnan(rsi_result.iloc[-1])
+        assert not math.isnan(atr_result.iloc[-1])

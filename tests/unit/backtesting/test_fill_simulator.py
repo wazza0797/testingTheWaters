@@ -278,3 +278,46 @@ class TestFillTimestampAndOrderLinkage:
         assert fill.order_id == order.order_id
         assert fill.correlation_id == order.correlation_id
         assert fill.symbol == order.symbol
+
+
+class TestVolatilityAwareSpread:
+    def test_observe_bar_widens_fill_price_after_atr_warms_up(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        simulator = FillSimulator(
+            spread_model=SpreadModel(spread_bps=0, volatility_k=2.0, atr_period=2),
+            fee_model=FeeModel(assume_maker_on_limit=True),
+            partial_fill_model=PartialFillModel(1.0),
+            use_next_bar_open=True,
+        )
+        seed_bars = [
+            make_bar(open_="100", high="110", low="90", close="100", volume="10"),
+            make_bar(open_="100", high="120", low="80", close="100", volume="10"),
+            make_bar(open_="100", high="115", low="85", close="100", volume="10"),
+        ]
+        for bar in seed_bars:
+            simulator.observe_bar(bar)
+
+        fill_bar = make_bar(open_="100", high="110", low="90", close="100", volume="10")
+        simulator.observe_bar(fill_bar)
+        fill = simulator.simulate_fill(
+            _market_order(), Decimal("0.1"), fill_bar, btc_usdt_instrument_rules
+        )
+
+        assert fill is not None
+        assert fill.fill_price > Decimal("100")
+
+    def test_k_zero_observe_bar_is_noop_for_prices(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        simulator = _simulator(spread_bps=10)
+        bar = make_bar(open_="50000", high="51000", low="49000", close="50000", volume="10")
+        for _ in range(20):
+            simulator.observe_bar(bar)
+
+        fill = simulator.simulate_fill(
+            _market_order(), Decimal("0.1"), bar, btc_usdt_instrument_rules
+        )
+
+        assert fill is not None
+        assert fill.fill_price == Decimal("50025.0000")
