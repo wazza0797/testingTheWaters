@@ -12,7 +12,7 @@ from trading_platform.backtesting.ledger import BacktestLedger
 from trading_platform.backtesting.models.fee_model import FeeModel
 from trading_platform.backtesting.models.latency_model import LatencyModel
 from trading_platform.backtesting.models.partial_fill_model import PartialFillModel
-from trading_platform.backtesting.models.spread_model import SpreadModel
+from trading_platform.backtesting.models.spread_model import SpreadModel, max_half_spread_fraction
 from trading_platform.backtesting.order_queue import OrderQueue
 from trading_platform.config.loader import AppConfig
 from trading_platform.config.settings import Settings
@@ -211,6 +211,11 @@ def build_backtest_engine(
         sizer,
         broker,
         cash_safety_buffer_pct=backtest_config.cash_safety_buffer_pct,
+        fill_cost_fraction=float(
+            max_half_spread_fraction(
+                backtest_config.spread_bps, backtest_config.spread_volatility_k
+            )
+        ),
     )
     risk_handler = RiskHandler(risk_engine, container.event_bus)
 

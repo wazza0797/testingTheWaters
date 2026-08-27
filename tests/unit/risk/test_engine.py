@@ -70,6 +70,7 @@ def _engine(
     pending_symbols: frozenset[str] = frozenset(),
     cash: Decimal | None = None,
     cash_safety_buffer_pct: float = 0.001,
+    fill_cost_fraction: float = 0.0,
 ) -> PassThroughRiskEngine:
     return PassThroughRiskEngine(
         portfolio=StubPortfolio(equity, position, cash),
@@ -77,6 +78,7 @@ def _engine(
         sizer=EquityFractionSizer(fraction),
         pending_orders=StubPendingOrderTracker(pending_symbols),
         cash_safety_buffer_pct=cash_safety_buffer_pct,
+        fill_cost_fraction=fill_cost_fraction,
     )
 
 
@@ -232,6 +234,46 @@ class TestCashSufficiencyGuard:
         assert order is not None
         worst_case_cost = order.quantity * Decimal("50000") * Decimal("1.001")
         assert worst_case_cost <= Decimal("10000")
+
+    def test_fill_cost_fraction_from_vol_spread_further_trims_size(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        # Regression for Bugbot: when spread_volatility_k > 0, the cash guard
+        # must reserve the same worst-case half-spread SpreadModel can apply,
+        # or 100% sizing can still overdraw the ledger.
+        from trading_platform.backtesting.models.spread_model import max_half_spread_fraction
+
+        fill_cost = float(max_half_spread_fraction(spread_bps=5.0, volatility_k=2.0))
+        engine = _engine(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            rules=btc_usdt_instrument_rules,
+            cash_safety_buffer_pct=0.0,
+            fill_cost_fraction=fill_cost,
+        )
+        bar = make_bar(close="50000", open_="50000", high="50000", low="50000")
+
+        decision = engine.evaluate(_signal(SignalType.BUY), bar)
+
+        assert decision.approved
+        order = decision.order
+        assert order is not None
+        worst_case_cost = (
+            order.quantity
+            * Decimal("50000")
+            * (Decimal("1") + Decimal(str(fill_cost)) + Decimal("0.001"))
+        )
+        assert worst_case_cost <= Decimal("10000")
+        # Stricter than fee-only sizing.
+        fee_only = _engine(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            rules=btc_usdt_instrument_rules,
+            cash_safety_buffer_pct=0.0,
+            fill_cost_fraction=0.0,
+        ).evaluate(_signal(SignalType.BUY), bar)
+        assert fee_only.order is not None
+        assert order.quantity < fee_only.order.quantity
 
 
 class TestSellAndCloseSignals:

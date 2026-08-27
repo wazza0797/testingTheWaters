@@ -80,3 +80,18 @@ class TestVolatilityScaling:
     def test_rejects_negative_volatility_k(self) -> None:
         with pytest.raises(ValueError, match="volatility_k"):
             SpreadModel(spread_bps=5, volatility_k=-1.0)
+
+    def test_atr_over_price_is_capped_for_spread_scaling(self) -> None:
+        model = SpreadModel(spread_bps=0, volatility_k=2.0)
+        mid = Decimal("100")
+        # ATR == mid would be 100% without the cap; capped at 5% * k=2 => 10%
+        capped = model.fill_price(OrderSide.BUY, mid, atr=Decimal("100"))
+        uncapped_would_be = mid * Decimal("3")  # 1 + 2*1.0
+        assert capped == Decimal("110")  # 100 * (1 + 0.10)
+        assert capped < uncapped_would_be
+
+    def test_max_half_spread_fraction_matches_fill_cap(self) -> None:
+        from trading_platform.backtesting.models.spread_model import max_half_spread_fraction
+
+        model = SpreadModel(spread_bps=5, volatility_k=2.0)
+        assert model.max_half_spread_fraction == max_half_spread_fraction(5.0, 2.0)
