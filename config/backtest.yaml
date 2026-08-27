@@ -1,14 +1,25 @@
-# Backtest fill-simulation parameters (Milestone 4). Merged over default.yaml
-# when running `trading-platform backtest`.
+# Backtest fill-simulation parameters (Milestone 4 / 4.5). Merged over
+# default.yaml when running `trading-platform backtest`.
 backtest:
   starting_cash: "10000"           # quoted: parsed as Decimal, not float
   position_size_pct: 1.0           # fraction of equity risked per trade (long-only, no sizing module yet)
   cash_safety_buffer_pct: 0.001    # extra headroom (on top of taker fee) so 100% sizing can't overdraw cash
-  spread_bps: 5                    # flat override — no per-instrument spread source exists yet
+  spread_bps: 5                    # floor spread; set spread_volatility_k > 0 to widen with ATR
+  spread_volatility_k: 0.0         # 0 = flat spread (M4 behaviour); try 2.0 for vol-aware fills
+  spread_atr_period: 14
   latency_bars: 1
   volume_participation_rate: 0.10  # max % of bar volume per partial fill
   assume_maker_on_limit: true      # limit orders default to maker if non-crossing
   use_next_bar_open: true          # fill price at next bar open (with latency)
+
+# Hold-out train/test split (Milestone 4.5 Phase A). Disabled by default —
+# enable and set dates to run IS then OOS side-by-side. OOS is the only
+# result that counts for strategy validation.
+validation:
+  enabled: false
+  # train_end: "2025-01-01"      # in-sample ends here (exclusive)
+  # test_start: "2025-01-01"     # out-of-sample starts here (inclusive)
+  # test_end: null               # null = end of loaded range; optional embargo via train_end < test_start
 
 # Reference strategy run by `trading-platform backtest` — see
 # strategies/examples/sma_crossover.py. Swap `path`/`params` to backtest a

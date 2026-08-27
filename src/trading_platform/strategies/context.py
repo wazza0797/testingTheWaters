@@ -7,7 +7,12 @@ from typing import Any
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.position import Position
 from trading_platform.domain.ports.portfolio import IPositionProvider
-from trading_platform.indicators import IndicatorRegistry, build_default_registry, closes_from_bars
+from trading_platform.indicators import (
+    IndicatorRegistry,
+    build_default_registry,
+    closes_from_bars,
+    ohlc_from_bars,
+)
 
 
 class NullPositionProvider:
@@ -41,7 +46,11 @@ class DefaultStrategyContext:
         if not bars:
             return float("nan")
         closes = closes_from_bars(bars)
-        series = self.registry.compute(name, closes, **kwargs)
+        if name == "atr":
+            high, low, _close = ohlc_from_bars(bars)
+            series = self.registry.compute(name, closes, high=high, low=low, **kwargs)
+        else:
+            series = self.registry.compute(name, closes, **kwargs)
         return float(series.iloc[-1])
 
     def position_for(self, symbol: str) -> Position | None:

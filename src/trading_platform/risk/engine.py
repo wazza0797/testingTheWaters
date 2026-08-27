@@ -61,12 +61,17 @@ class PassThroughRiskEngine:
         sizer: EquityFractionSizer,
         pending_orders: IPendingOrderTracker,
         cash_safety_buffer_pct: float = 0.001,
+        fill_cost_fraction: float = 0.0,
     ) -> None:
         self._portfolio = portfolio
         self._instrument_rules = instrument_rules
         self._sizer = sizer
         self._pending_orders = pending_orders
         self._cash_safety_buffer_pct = Decimal(str(cash_safety_buffer_pct))
+        # Worst-case half-spread as a fraction of price (flat spread_bps plus
+        # any volatility headroom). Must match SpreadModel.max_half_spread_fraction
+        # so a vol-widened fill cannot overdraw cash after approval.
+        self._fill_cost_fraction = Decimal(str(fill_cost_fraction))
 
     def evaluate(self, signal: Signal, bar: Bar) -> RiskDecision:
         rules = self._instrument_rules.get(signal.symbol)
@@ -145,13 +150,15 @@ class PassThroughRiskEngine:
         at a worse price (`FillSimulator` applies spread) and always pays a
         fee. Sizing 100% of equity at the signal price alone can therefore
         leave `BacktestLedger.apply_fill` short of cash once the real,
-        slightly-more-expensive fill lands (the cash-sufficiency gap
-        documented in `docs/architecture.md`). Padding the reference price by
-        `rules.taker_fee_rate` (worst-case fee) plus `cash_safety_buffer_pct`
-        (a margin for spread/slippage) closes that gap without needing this
-        engine to depend on `backtesting`'s fill-simulation models directly.
+        slightly-more-expensive fill lands. Padding the reference price by
+        `rules.taker_fee_rate`, `cash_safety_buffer_pct`, and
+        `fill_cost_fraction` (worst-case half-spread from `SpreadModel`,
+        including volatility headroom) closes that gap without this engine
+        depending on fill-simulation internals.
         """
-        worst_case_unit_cost = price * (1 + self._cash_safety_buffer_pct + rules.taker_fee_rate)
+        worst_case_unit_cost = price * (
+            1 + self._cash_safety_buffer_pct + self._fill_cost_fraction + rules.taker_fee_rate
+        )
         if worst_case_unit_cost <= 0:
             return Decimal("0")
         max_affordable = self._portfolio.cash / worst_case_unit_cost

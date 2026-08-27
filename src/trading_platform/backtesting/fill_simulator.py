@@ -14,9 +14,14 @@ from trading_platform.execution.precision import round_qty
 
 class FillSimulator:
     """Orchestrates one bar's fill attempt for one order: spread -> partial-fill
-    cap -> fee. Shared, stateless logic — `SimBroker` owns the per-order
+    cap -> fee. Shared logic — `SimBroker` owns the per-order
     latency/remaining-quantity bookkeeping (`OrderQueue`) and calls this once
     per (order, bar) pair once the order is past latency.
+
+    Also maintains a running Wilder's ATR (when `SpreadModel.volatility_enabled`)
+    updated via `observe_bar` on every bar of the replay — not only bars that
+    attempt a fill — so the volatility-scaled spread always reflects the
+    current regime.
 
     Returns `None` when the order doesn't fill *at all* against this bar (a
     resting limit order the bar's range never reached) — as opposed to a
@@ -35,14 +40,53 @@ class FillSimulator:
         self._fee_model = fee_model
         self._partial_fill_model = partial_fill_model
         self._use_next_bar_open = use_next_bar_open
+        self._atr_period = spread_model.atr_period
+        self._prev_close: float | None = None
+        self._seed_trs: list[float] = []
+        self._atr: float | None = None
+
+    def observe_bar(self, bar: Bar) -> None:
+        """Advance the running ATR with this bar's True Range.
+
+        Must be called exactly once per bar of the replay (from
+        `SimBroker.process_bar`), including bars with no pending orders —
+        otherwise the volatility spread would freeze whenever the book is
+        empty.
+        """
+        if not self._spread_model.volatility_enabled:
+            return
+
+        high = float(bar.high)
+        low = float(bar.low)
+        close = float(bar.close)
+        if self._prev_close is None:
+            self._prev_close = close
+            return
+
+        true_range = max(
+            high - low,
+            abs(high - self._prev_close),
+            abs(low - self._prev_close),
+        )
+        self._prev_close = close
+
+        if self._atr is None:
+            self._seed_trs.append(true_range)
+            if len(self._seed_trs) >= self._atr_period:
+                self._atr = sum(self._seed_trs) / self._atr_period
+                self._seed_trs.clear()
+            return
+
+        self._atr = (self._atr * (self._atr_period - 1) + true_range) / self._atr_period
 
     def simulate_fill(
         self, order: Order, remaining_qty: Decimal, bar: Bar, rules: InstrumentRules
     ) -> Fill | None:
         reference_price = bar.open if self._use_next_bar_open else bar.close
+        atr = Decimal(str(self._atr)) if self._atr is not None else None
 
         if order.order_type == OrderType.MARKET:
-            fill_price = self._spread_model.fill_price(order.side, reference_price)
+            fill_price = self._spread_model.fill_price(order.side, reference_price, atr=atr)
             crosses_on_submission = True  # a market order always takes liquidity
         else:
             if order.price is None:

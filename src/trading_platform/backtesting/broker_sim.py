@@ -58,6 +58,8 @@ class SimBroker:
         symbol check below is a defensive guard, not a multi-symbol
         scheduling mechanism — that's unscheduled future work.
         """
+        self._fill_simulator.observe_bar(bar)
+
         fills: list[tuple[Order, Fill]] = []
         for queued in self._order_queue.advance():
             order = queued.order

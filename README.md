@@ -4,11 +4,11 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–4 complete (foundation, historical data download,
-> indicator engine, pluggable strategy engine, backtesting engine with
-> realistic simulated fills). No paper/live execution or portfolio
-> persistence exists yet — see [`docs/milestones/`](docs/milestones/) and the
-> project plan for the full roadmap.
+> **Status:** Milestones 0–4.5 complete (foundation through backtesting with
+> hold-out validation and volatility-aware spreads; walk-forward deferred to
+> after M5). No paper/live execution or portfolio persistence exists yet —
+> see [`docs/milestones/`](docs/milestones/) and the project plan for the
+> full roadmap.
 
 ## Non-Goals (for now)
 
@@ -151,6 +151,6 @@ tracked in the project plan and mirrored under
 
 | Milestone | Focus |
 |-----------|-------|
-| [M4.5 — Backtest Validation & Realism](docs/milestones/m4.5-backtest-validation-and-realism.md) | Hold-out IS/OOS splits, volatility-aware spread, walk-forward optimization |
 | [M5 — Performance Analytics](docs/milestones/m5-performance-analytics.md) | Sharpe, drawdown, regime splits, statistical significance flags |
+| M4.5 Phase C — Walk-forward | Grid-search optimizer + rolling OOS folds (after M5) |
 | M6 — Paper Trading | Simulated live loop, `PortfolioHandler`, `AnalyticsHandler` wired |

@@ -56,3 +56,42 @@ class TestFillPrice:
         wide_price = wide.fill_price(OrderSide.BUY, mid)
 
         assert wide_price - mid > narrow_price - mid
+
+
+class TestVolatilityScaling:
+    def test_k_zero_ignores_atr(self) -> None:
+        model = SpreadModel(spread_bps=10, volatility_k=0.0)
+        mid = Decimal("50000")
+
+        without_atr = model.fill_price(OrderSide.BUY, mid)
+        with_atr = model.fill_price(OrderSide.BUY, mid, atr=Decimal("1000"))
+
+        assert without_atr == with_atr
+
+    def test_high_atr_widens_spread_vs_low_atr(self) -> None:
+        model = SpreadModel(spread_bps=5, volatility_k=2.0)
+        mid = Decimal("50000")
+
+        low_vol = model.fill_price(OrderSide.BUY, mid, atr=Decimal("100"))
+        high_vol = model.fill_price(OrderSide.BUY, mid, atr=Decimal("1000"))
+
+        assert high_vol > low_vol
+
+    def test_rejects_negative_volatility_k(self) -> None:
+        with pytest.raises(ValueError, match="volatility_k"):
+            SpreadModel(spread_bps=5, volatility_k=-1.0)
+
+    def test_atr_over_price_is_capped_for_spread_scaling(self) -> None:
+        model = SpreadModel(spread_bps=0, volatility_k=2.0)
+        mid = Decimal("100")
+        # ATR == mid would be 100% without the cap; capped at 5% * k=2 => 10%
+        capped = model.fill_price(OrderSide.BUY, mid, atr=Decimal("100"))
+        uncapped_would_be = mid * Decimal("3")  # 1 + 2*1.0
+        assert capped == Decimal("110")  # 100 * (1 + 0.10)
+        assert capped < uncapped_would_be
+
+    def test_max_half_spread_fraction_matches_fill_cap(self) -> None:
+        from trading_platform.backtesting.models.spread_model import max_half_spread_fraction
+
+        model = SpreadModel(spread_bps=5, volatility_k=2.0)
+        assert model.max_half_spread_fraction == max_half_spread_fraction(5.0, 2.0)

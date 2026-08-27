@@ -56,7 +56,7 @@ class TestBacktestEngineIntegration:
         bars = _synthetic_trending_bars(make_bar)
 
         result = run.engine.run(bars, timeframe="1h")
-        run.strategy_handler.stop()
+        run.teardown()
 
         assert result.bars_processed == len(bars)
         assert len(result.equity_curve) == len(bars)
@@ -85,7 +85,7 @@ class TestBacktestEngineIntegration:
         container.event_bus.publish = _recording_publish  # type: ignore[method-assign]
 
         run.engine.run(bars, timeframe="1h")
-        run.strategy_handler.stop()
+        run.teardown()
 
         assert any(isinstance(e, BarClosed) for e in recorded_events)
         assert any(isinstance(e, SignalGenerated) for e in recorded_events)

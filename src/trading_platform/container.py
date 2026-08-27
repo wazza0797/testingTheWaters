@@ -12,7 +12,7 @@ from trading_platform.backtesting.ledger import BacktestLedger
 from trading_platform.backtesting.models.fee_model import FeeModel
 from trading_platform.backtesting.models.latency_model import LatencyModel
 from trading_platform.backtesting.models.partial_fill_model import PartialFillModel
-from trading_platform.backtesting.models.spread_model import SpreadModel
+from trading_platform.backtesting.models.spread_model import SpreadModel, max_half_spread_fraction
 from trading_platform.backtesting.order_queue import OrderQueue
 from trading_platform.config.loader import AppConfig
 from trading_platform.config.settings import Settings
@@ -136,12 +136,25 @@ class BacktestRun:
     fully-wired `BacktestEngine` (strategy -> risk -> execution already
     subscribed on `container.event_bus`) plus the resolved symbol/timeframe
     it was built for.
+
+    Call `teardown()` when the run is finished (or between hold-out windows)
+    so subscriptions don't leak into a subsequent run on the same bus.
     """
 
     engine: BacktestEngine
     strategy_handler: StrategyHandler
+    risk_handler: RiskHandler
+    execution_handler: ExecutionHandler
+    event_bus: IEventBus
     symbol: str
     timeframe: str
+
+    def teardown(self) -> None:
+        """Stop the strategy and unsubscribe this run's handlers from the bus."""
+        self.strategy_handler.stop()
+        self.event_bus.unsubscribe(BarClosed, self.strategy_handler)
+        self.event_bus.unsubscribe(SignalGenerated, self.risk_handler)
+        self.event_bus.unsubscribe(OrderApproved, self.execution_handler)
 
 
 def build_backtest_engine(
@@ -155,6 +168,9 @@ def build_backtest_engine(
     `instrument_rules` — a cache/exchange round trip the caller
     (`main.py`'s `backtest` command) performs, that `serve`/`download-data`
     have no reason to pay for at every startup.
+
+    Safe to call more than once on the same container (e.g. hold-out IS then
+    OOS) as long as each prior `BacktestRun` has been `teardown()`'d first.
     """
     config = container.config
     symbol = config.trading.symbol
@@ -173,7 +189,11 @@ def build_backtest_engine(
     rules_by_symbol = {symbol: instrument_rules}
 
     fill_simulator = FillSimulator(
-        spread_model=SpreadModel(backtest_config.spread_bps),
+        spread_model=SpreadModel(
+            backtest_config.spread_bps,
+            volatility_k=backtest_config.spread_volatility_k,
+            atr_period=backtest_config.spread_atr_period,
+        ),
         fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
         partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
         use_next_bar_open=backtest_config.use_next_bar_open,
@@ -191,6 +211,11 @@ def build_backtest_engine(
         sizer,
         broker,
         cash_safety_buffer_pct=backtest_config.cash_safety_buffer_pct,
+        fill_cost_fraction=float(
+            max_half_spread_fraction(
+                backtest_config.spread_bps, backtest_config.spread_volatility_k
+            )
+        ),
     )
     risk_handler = RiskHandler(risk_engine, container.event_bus)
 
@@ -215,5 +240,11 @@ def build_backtest_engine(
     engine = BacktestEngine(container.event_bus, broker, ledger, symbol)
 
     return BacktestRun(
-        engine=engine, strategy_handler=strategy_handler, symbol=symbol, timeframe=timeframe
+        engine=engine,
+        strategy_handler=strategy_handler,
+        risk_handler=risk_handler,
+        execution_handler=execution_handler,
+        event_bus=container.event_bus,
+        symbol=symbol,
+        timeframe=timeframe,
     )
