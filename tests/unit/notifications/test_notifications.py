@@ -18,6 +18,7 @@ from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.notifications.composite import CompositeNotifier
 from trading_platform.notifications.console import ConsoleNotifier
+from trading_platform.notifications.discord import DiscordNotifier
 from trading_platform.notifications.factory import build_notifier
 from trading_platform.notifications.handler import NotificationHandler, format_event
 from trading_platform.notifications.telegram import TelegramNotifier
@@ -142,12 +143,59 @@ class TestTelegramNotifier:
             notifier.notify("hi")
 
 
+class TestDiscordNotifier:
+    def test_posts_webhook_content(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url: str, **kwargs: object) -> httpx.Response:
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            return httpx.Response(204)
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/abc",
+            http_post=fake_post,
+        )
+        notifier.notify("hi", level="warning")
+        assert captured["url"] == "https://discord.com/api/webhooks/1/abc"
+        assert captured["json"] == {"content": "[WARNING] hi"}
+
+    def test_raises_on_http_error(self) -> None:
+        def fake_post(url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(401, text="unauthorized")
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/abc",
+            http_post=fake_post,
+        )
+        with pytest.raises(RuntimeError, match="Discord HTTP 401"):
+            notifier.notify("hi")
+
+    def test_truncates_overlong_content(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url: str, **kwargs: object) -> httpx.Response:
+            captured["json"] = kwargs["json"]
+            return httpx.Response(204)
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/abc",
+            http_post=fake_post,
+        )
+        notifier.notify("x" * 2500)
+        content = captured["json"]["content"]  # type: ignore[index]
+        assert isinstance(content, str)
+        assert len(content) == 2000
+        assert content.endswith("…")
+
+
 class TestBuildNotifier:
-    def test_console_only_without_telegram_creds(self) -> None:
+    def test_console_only_without_remote_creds(self) -> None:
         settings = Settings(
             _env_file=None,
             TELEGRAM_BOT_TOKEN=None,
             TELEGRAM_CHAT_ID=None,
+            DISCORD_WEBHOOK_URL=None,
         )
         notifier = build_notifier(settings)
         assert isinstance(notifier, CompositeNotifier)
@@ -159,11 +207,37 @@ class TestBuildNotifier:
             _env_file=None,
             TELEGRAM_BOT_TOKEN="tok",
             TELEGRAM_CHAT_ID="42",
+            DISCORD_WEBHOOK_URL=None,
         )
         notifier = build_notifier(settings)
         assert isinstance(notifier, CompositeNotifier)
         assert len(notifier.notifiers) == 2
         assert isinstance(notifier.notifiers[1], TelegramNotifier)
+
+    def test_includes_discord_when_configured(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            TELEGRAM_BOT_TOKEN=None,
+            TELEGRAM_CHAT_ID=None,
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/abc",
+        )
+        notifier = build_notifier(settings)
+        assert isinstance(notifier, CompositeNotifier)
+        assert len(notifier.notifiers) == 2
+        assert isinstance(notifier.notifiers[1], DiscordNotifier)
+
+    def test_includes_both_remotes_when_configured(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            TELEGRAM_BOT_TOKEN="tok",
+            TELEGRAM_CHAT_ID="42",
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/abc",
+        )
+        notifier = build_notifier(settings)
+        assert isinstance(notifier, CompositeNotifier)
+        assert len(notifier.notifiers) == 3
+        assert isinstance(notifier.notifiers[1], TelegramNotifier)
+        assert isinstance(notifier.notifiers[2], DiscordNotifier)
 
 
 class TestNotificationHandler:

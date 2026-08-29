@@ -5,8 +5,8 @@ Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
 > **Status:** Milestones 0–7 complete (including paper trading and
-> console/Telegram notifications). Live execution and Docker are still ahead —
-> see [`docs/milestones/`](docs/milestones/) and the project plan.
+> console / Discord / Telegram notifications). Live execution and Docker are
+> still ahead — see [`docs/milestones/`](docs/milestones/) and the project plan.
 
 ## Non-Goals (for now)
 
@@ -133,9 +133,9 @@ point-in-time instrument rules, static spread assumptions).
 
 Paper trading (Milestone 6) requires no exchange API keys and never calls
 order-placement methods on the exchange adapter. Notifications (Milestone 7)
-print fills/rejects/errors/heartbeats to the console; set `TELEGRAM_BOT_TOKEN`
-and `TELEGRAM_CHAT_ID` in `.env` to also fan out to Telegram. Live trading
-(Milestone 8) is
+print fills/rejects/errors/heartbeats to the console; set `DISCORD_WEBHOOK_URL`
+and/or both `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env` to also fan out
+to Discord and/or Telegram. Live trading (Milestone 8) is
 double-gated: `ENV=live` **and** `LIVE_TRADING_ENABLED=true` must both be set
 explicitly, or the process refuses to start (see
 [`Settings.require_live_trading_confirmed`](src/trading_platform/config/settings.py)).
