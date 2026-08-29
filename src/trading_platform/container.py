@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from trading_platform.analytics.handler import AnalyticsHandler
 from trading_platform.analytics.state import RunningPerformanceState
+from trading_platform.application.paper_loop import PaperTradingLoop
 from trading_platform.backtesting.broker_sim import SimBroker
 from trading_platform.backtesting.engine import BacktestEngine
 from trading_platform.backtesting.fill_simulator import FillSimulator
@@ -32,9 +33,11 @@ from trading_platform.domain.ports.exchange import IExchangeAdapter
 from trading_platform.domain.ports.market_data import IMarketDataRepository
 from trading_platform.exchanges.binance.adapter import BinanceAdapter
 from trading_platform.execution.handler import ExecutionHandler
+from trading_platform.execution.paper_broker import PaperBroker
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
 from trading_platform.infrastructure.event_bus.timed import TimedEventBus
 from trading_platform.infrastructure.metrics.prometheus import PrometheusMetricsCollector
+from trading_platform.market_data.feed import PollingMarketDataFeed
 from trading_platform.market_data.ingest import DataIngestService
 from trading_platform.market_data.instrument_rules_cache import InstrumentRulesCache
 from trading_platform.market_data.repository.parquet import ParquetMarketDataRepository
@@ -45,6 +48,12 @@ from trading_platform.observability.summary import (
     SummaryTrackingMetricsCollector,
 )
 from trading_platform.observability.system_monitor import SystemMonitor
+from trading_platform.portfolio.book import PortfolioBook
+from trading_platform.portfolio.handler import PortfolioHandler
+from trading_platform.portfolio.persistence import (
+    JsonPaperStateStore,
+    book_from_snapshot,
+)
 from trading_platform.risk.engine import PassThroughRiskEngine
 from trading_platform.risk.handler import RiskHandler
 from trading_platform.risk.sizing import EquityFractionSizer
@@ -293,4 +302,141 @@ def build_backtest_engine(
         symbol=symbol,
         timeframe=timeframe,
         analytics_handler=container.analytics_handler,
+    )
+
+
+@dataclass
+class PaperSession:
+    """Wired paper-trading session: loop + handlers + portfolio persistence."""
+
+    loop: PaperTradingLoop
+    portfolio_handler: PortfolioHandler
+    strategy_handler: StrategyHandler
+    risk_handler: RiskHandler
+    execution_handler: ExecutionHandler
+    event_bus: IEventBus
+    symbol: str
+    timeframe: str
+    state_path: Path
+
+    def teardown(self) -> None:
+        self.strategy_handler.stop()
+        self.event_bus.unsubscribe(BarClosed, self.strategy_handler)
+        self.event_bus.unsubscribe(SignalGenerated, self.risk_handler)
+        self.event_bus.unsubscribe(OrderApproved, self.execution_handler)
+        self.event_bus.unsubscribe(FillReceived, self.portfolio_handler)
+        self.event_bus.unsubscribe(BarClosed, self.portfolio_handler)
+
+
+def build_paper_session(
+    container: AppContainer,
+    instrument_rules: InstrumentRules,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_heartbeat: Callable[[str], None] | None = None,
+) -> PaperSession:
+    """Wire strategy → risk → execution → portfolio for `trading-platform paper`."""
+    config = container.config
+    symbol = symbol or config.trading.symbol
+    timeframe = timeframe or config.trading.timeframe
+    paper_cfg = config.paper
+    backtest_config = config.backtest
+
+    if config.strategy.path is None:
+        raise ConfigurationError(
+            "No strategy configured for paper trading — set 'strategy.path' in config/paper.yaml."
+        )
+
+    state_path = Path(container.settings.data_dir) / paper_cfg.state_file
+    store = JsonPaperStateStore(state_path)
+    snapshot = store.load()
+    if snapshot is not None:
+        book = book_from_snapshot(snapshot)
+        last_bar_ts = snapshot.last_bar_timestamp
+        container.analytics_state.fills.clear()
+        container.analytics_state.fills.extend(snapshot.fills)
+    else:
+        book = PortfolioBook(starting_cash=paper_cfg.starting_cash)
+        last_bar_ts = None
+    container.analytics_state.starting_cash = paper_cfg.starting_cash
+
+    portfolio_handler = PortfolioHandler(book, store, last_bar_timestamp=last_bar_ts)
+    rules_by_symbol = {symbol: instrument_rules}
+
+    fill_simulator = FillSimulator(
+        spread_model=SpreadModel(
+            backtest_config.spread_bps,
+            volatility_k=backtest_config.spread_volatility_k,
+            atr_period=backtest_config.spread_atr_period,
+        ),
+        fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
+        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        use_next_bar_open=backtest_config.use_next_bar_open,
+    )
+    broker = PaperBroker(
+        fill_simulator=fill_simulator,
+        order_queue=OrderQueue(latency_model=LatencyModel(backtest_config.latency_bars)),
+        instrument_rules=rules_by_symbol,
+    )
+
+    sizer = EquityFractionSizer(backtest_config.position_size_pct)
+    risk_engine = PassThroughRiskEngine(
+        portfolio_handler,
+        rules_by_symbol,
+        sizer,
+        broker,
+        cash_safety_buffer_pct=backtest_config.cash_safety_buffer_pct,
+        fill_cost_fraction=float(
+            max_half_spread_fraction(
+                backtest_config.spread_bps, backtest_config.spread_volatility_k
+            )
+        ),
+    )
+    risk_handler = RiskHandler(risk_engine, container.event_bus)
+    execution_handler = ExecutionHandler(broker, rules_by_symbol, container.event_bus)
+
+    params = dict(config.strategy.params)
+    strategy = instantiate_strategy(config.strategy.path, params)
+    strategy_name = describe_strategy(config.strategy.path, symbol, params)
+    strategy_context = DefaultStrategyContext(
+        symbol=symbol,
+        timeframe=timeframe,
+        params=params,
+        position_provider=portfolio_handler,
+    )
+    strategy_handler = StrategyHandler(
+        strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name
+    )
+
+    container.event_bus.subscribe(BarClosed, strategy_handler)
+    container.event_bus.subscribe(SignalGenerated, risk_handler)
+    container.event_bus.subscribe(OrderApproved, execution_handler)
+    container.event_bus.subscribe(FillReceived, portfolio_handler)
+    container.event_bus.subscribe(BarClosed, portfolio_handler)
+
+    feed = PollingMarketDataFeed(container.exchange_adapter)
+    loop = PaperTradingLoop(
+        container.event_bus,
+        feed,
+        broker,
+        symbol=symbol,
+        timeframe=timeframe,
+        poll_interval_sec=paper_cfg.poll_interval_sec,
+        last_bar_timestamp=last_bar_ts,
+        should_stop=should_stop,
+        on_heartbeat=on_heartbeat,
+    )
+
+    return PaperSession(
+        loop=loop,
+        portfolio_handler=portfolio_handler,
+        strategy_handler=strategy_handler,
+        risk_handler=risk_handler,
+        execution_handler=execution_handler,
+        event_bus=container.event_bus,
+        symbol=symbol,
+        timeframe=timeframe,
+        state_path=state_path,
     )

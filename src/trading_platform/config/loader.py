@@ -150,6 +150,18 @@ class AnalyticsConfig(BaseModel):
     market_sma_period: int = 200
 
 
+class PaperConfig(BaseModel):
+    """Paper-trading session settings (Milestone 6).
+
+    Fill realism (spread, fees, latency, partials) reuses `BacktestConfig`
+    fields from the merged YAML overlay so paper and backtest stay aligned.
+    """
+
+    starting_cash: Decimal = Decimal("10000")
+    poll_interval_sec: float = 30.0
+    state_file: str = "paper_state.json"
+
+
 class AppConfig(BaseModel):
     """Typed, validated view over `config/*.yaml`. Never holds secrets — those
     live in `Settings` (env vars) and are merged in by the composition root.
@@ -161,6 +173,7 @@ class AppConfig(BaseModel):
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+    paper: PaperConfig = Field(default_factory=PaperConfig)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

@@ -548,8 +548,7 @@ as each milestone lands.
 | M4 — Backtesting Engine | Complete | [`m4-backtesting-engine.md`](milestones/m4-backtesting-engine.md) |
 | M4.5 — Backtest Validation & Realism | Complete (A+B+C) | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread, walk-forward grid search |
 | M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
-| M6 — Paper Trading | Planned | — |
+| M6 — Paper Trading | Complete | [`m6-paper-trading.md`](milestones/m6-paper-trading.md) — live closed-bar poll, virtual fills, JSON portfolio state |
 | M7+ — Notifications, Live, Docker | Planned | — |
 
-**Recommended build order after M4:** ~~M4.5 Phase A (hold-out) → M4.5 Phase B
-(vol spread)~~ ✅ → ~~M5 (analytics)~~ ✅ → ~~M4.5 Phase C (walk-forward)~~ ✅ → M6.
+**Recommended build order after M4:** ~~M4.5 A+B~~ ✅ → ~~M5~~ ✅ → ~~M4.5 C~~ ✅ → ~~M6~~ ✅ → M7+.
