@@ -6,7 +6,9 @@ from typing import Any
 
 from trading_platform.domain.errors import ExchangeAdapterError
 from trading_platform.domain.models.bar import Bar
+from trading_platform.domain.models.exchange_order import ExchangeOrderState, ExchangeOrderStatus
 from trading_platform.domain.models.instrument_rules import InstrumentRules
+from trading_platform.domain.models.order import OrderSide, OrderType
 
 EXCHANGE_NAME = "binance"
 
@@ -95,4 +97,90 @@ def map_instrument_rules(symbol: str, market: dict[str, Any]) -> InstrumentRules
         qty_precision=_decimal_places(step_size),
         maker_fee_rate=maker_fee_rate,
         taker_fee_rate=taker_fee_rate,
+    )
+
+
+_CCXT_STATUS_TO_STATE: dict[str, ExchangeOrderState] = {
+    "open": ExchangeOrderState.OPEN,
+    "closed": ExchangeOrderState.FILLED,
+    "canceled": ExchangeOrderState.CANCELLED,
+    "cancelled": ExchangeOrderState.CANCELLED,
+    "expired": ExchangeOrderState.CANCELLED,
+    "rejected": ExchangeOrderState.REJECTED,
+}
+
+
+def map_ccxt_order(raw: dict[str, Any]) -> ExchangeOrderStatus:
+    """Map a ccxt order structure to venue-neutral `ExchangeOrderStatus`."""
+    try:
+        exchange_order_id = str(raw["id"])
+        symbol = str(raw["symbol"])
+        side = OrderSide(str(raw["side"]).lower())
+        order_type = OrderType(str(raw["type"]).lower())
+    except (KeyError, ValueError) as exc:
+        raise ExchangeAdapterError(f"Malformed ccxt order payload: {exc}") from exc
+
+    status_key = str(raw.get("status") or "open").lower()
+    state = _CCXT_STATUS_TO_STATE.get(status_key)
+    if state is None:
+        filled = _to_decimal(raw.get("filled") or 0, field="filled")
+        remaining = _to_decimal(raw.get("remaining") or 0, field="remaining")
+        if filled > 0 and remaining > 0:
+            state = ExchangeOrderState.PARTIALLY_FILLED
+        elif filled > 0 and remaining == 0:
+            state = ExchangeOrderState.FILLED
+        else:
+            state = ExchangeOrderState.OPEN
+
+    quantity = _to_decimal(raw.get("amount") or 0, field="amount")
+    filled_quantity = _to_decimal(raw.get("filled") or 0, field="filled")
+    remaining_raw = raw.get("remaining")
+    remaining_quantity = (
+        _to_decimal(remaining_raw, field="remaining")
+        if remaining_raw is not None
+        else quantity - filled_quantity
+    )
+    avg = raw.get("average")
+    average_fill_price = _to_decimal(avg, field="average") if avg not in (None, 0, "0") else None
+    if filled_quantity > 0 and average_fill_price is None:
+        # Fall back to last/price fields when average is missing.
+        for key in ("price", "lastTradePrice"):
+            if raw.get(key) not in (None, 0, "0"):
+                average_fill_price = _to_decimal(raw[key], field=key)
+                break
+
+    fee_cost = Decimal("0")
+    fee_currency: str | None = None
+    fee_info = raw.get("fee")
+    if isinstance(fee_info, dict) and fee_info.get("cost") is not None:
+        fee_cost = _to_decimal(fee_info["cost"], field="fee.cost")
+        fee_currency = fee_info.get("currency")
+    else:
+        for entry in raw.get("fees") or []:
+            if isinstance(entry, dict) and entry.get("cost") is not None:
+                fee_cost += _to_decimal(entry["cost"], field="fees.cost")
+                fee_currency = fee_currency or entry.get("currency")
+
+    ts_ms = raw.get("timestamp")
+    if ts_ms is None:
+        timestamp = datetime.now(tz=UTC)
+    else:
+        timestamp = datetime.fromtimestamp(float(ts_ms) / 1000, tz=UTC)
+
+    if state == ExchangeOrderState.OPEN and filled_quantity > 0 and remaining_quantity > 0:
+        state = ExchangeOrderState.PARTIALLY_FILLED
+
+    return ExchangeOrderStatus(
+        exchange_order_id=exchange_order_id,
+        symbol=symbol,
+        side=side,
+        order_type=order_type,
+        state=state,
+        quantity=quantity,
+        filled_quantity=filled_quantity,
+        remaining_quantity=remaining_quantity,
+        average_fill_price=average_fill_price,
+        fee=fee_cost,
+        fee_currency=fee_currency,
+        timestamp=timestamp,
     )

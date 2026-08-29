@@ -43,6 +43,9 @@ class FakeExchangeAdapter:
     def get_balance(self, asset):  # pragma: no cover
         raise NotImplementedError
 
+    def fetch_order(self, order_id, symbol):  # pragma: no cover
+        raise NotImplementedError
+
 
 class FakeRepository:
     def __init__(self) -> None:

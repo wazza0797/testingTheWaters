@@ -4,7 +4,7 @@
 
 **Depends on:** Milestone 4 (fill simulation), Milestone 5 (`AnalyticsHandler`)
 
-**Unblocks:** Milestone 7 (notifications), Milestone 8 (live trading)
+**Unblocks:** Milestone 7 (notifications), Milestone 8a (demo execution)
 
 ## Goals
 

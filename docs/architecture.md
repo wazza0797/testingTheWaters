@@ -68,6 +68,7 @@ flowchart TB
         BinanceAdapter[BinanceAdapter]
         ParquetRepo[ParquetMarketDataRepository]
         PaperBroker[PaperBroker]
+        DemoBroker[DemoBroker]
         LiveBroker[LiveBroker]
     end
 
@@ -93,6 +94,7 @@ flowchart TB
 
     StrategyHandler --> IStrategy
     ExecutionHandler --> PaperBroker
+    ExecutionHandler --> DemoBroker
     ExecutionHandler --> LiveBroker
     DataIngest --> IExchange
 
@@ -550,6 +552,8 @@ as each milestone lands.
 | M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
 | M6 — Paper Trading | Complete | [`m6-paper-trading.md`](milestones/m6-paper-trading.md) — live closed-bar poll, virtual fills, JSON portfolio state |
 | M7 — Notifications | Complete | [`m7-notifications.md`](milestones/m7-notifications.md) — console + Discord/Telegram via event subscriptions |
-| M8+ — Live, Docker | Planned | — |
+| M8a — Demo Execution | In progress | [`m8-demo-execution.md`](milestones/m8-demo-execution.md) — exchange sandbox via `DemoBroker` + `IExchangeAdapter` (Binance first; multi-venue ready) |
+| M8b — Live Execution | Planned | Mainnet `LiveBroker`, double-gated |
+| M9 — Docker | Planned | — |
 
-**Recommended build order after M4:** ~~M4.5 A+B~~ ✅ → ~~M5~~ ✅ → ~~M4.5 C~~ ✅ → ~~M6~~ ✅ → ~~M7~~ ✅ → M8+.
+**Recommended build order:** ~~M0–M7~~ ✅ → **M8a demo** → paper/demo soak → M9 Docker (optional) → M8b live.

@@ -9,9 +9,15 @@ from trading_platform.domain.models.order import Order
 class IBroker(Protocol):
     """A venue capable of accepting an Order and producing Fill(s).
 
-    Implementations: `SimBroker` (backtest), `PaperBroker` (paper), `LiveBroker`
-    (M8, gated). All three share the `FillSimulator` pipeline where applicable
-    so fill behaviour is consistent across modes.
+    Implementations (selected by composition root from execution mode):
+
+    - `SimBroker` — backtest, bar-driven `FillSimulator`
+    - `PaperBroker` — local paper, same simulator as backtest
+    - `DemoBroker` — exchange demo/practice/testnet via `IExchangeAdapter`
+    - `LiveBroker` — mainnet via the same adapter port (later; double-gated)
+
+    Strategy/risk/execution handlers depend only on this Protocol — never on a
+    concrete broker or exchange SDK.
     """
 
     def submit_order(self, order: Order) -> list[Fill]: ...

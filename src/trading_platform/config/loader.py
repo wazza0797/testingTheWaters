@@ -162,6 +162,18 @@ class PaperConfig(BaseModel):
     state_file: str = "paper_state.json"
 
 
+class DemoConfig(BaseModel):
+    """Exchange demo/practice session settings (Milestone 8a).
+
+    Unlike paper, fills come from the venue via `DemoBroker` + `IExchangeAdapter`.
+    `trading.exchange` selects which adapter the factory builds.
+    """
+
+    poll_interval_sec: float = 30.0
+    order_poll_interval_sec: float = 5.0
+    state_file: str = "demo_state.json"
+
+
 class AppConfig(BaseModel):
     """Typed, validated view over `config/*.yaml`. Never holds secrets — those
     live in `Settings` (env vars) and are merged in by the composition root.
@@ -174,6 +186,7 @@ class AppConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     paper: PaperConfig = Field(default_factory=PaperConfig)
+    demo: DemoConfig = Field(default_factory=DemoConfig)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
