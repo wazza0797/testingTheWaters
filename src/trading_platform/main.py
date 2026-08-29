@@ -14,8 +14,10 @@ import yaml
 
 from trading_platform import __version__
 from trading_platform.analytics.report import PerformanceReport, build_performance_report
+from trading_platform.backtesting.optimization import score_result
 from trading_platform.backtesting.result import BacktestResult
 from trading_platform.backtesting.validation import HoldOutValidator
+from trading_platform.backtesting.walk_forward import WalkForwardResult, WalkForwardRunner
 from trading_platform.config.loader import AnalyticsConfig, load_config
 from trading_platform.config.settings import Settings
 from trading_platform.container import AppContainer, build_backtest_engine, build_container
@@ -474,6 +476,147 @@ def backtest(
             )
     except TradingPlatformError as exc:
         typer.echo(f"Backtest failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _print_walk_forward_result(result: WalkForwardResult) -> None:
+    typer.echo("")
+    typer.echo("=== Walk-Forward Result ===")
+    typer.echo(f"Folds:              {result.fold_count}")
+    typer.echo(f"Objective:          {result.objective}")
+    typer.echo(
+        f"{'Fold':<6} {'IS bars':>10} {'OOS bars':>10} "
+        f"{'OOS ret%':>10} {'OOS Sharpe':>11}  Best params"
+    )
+    for fold in result.folds:
+        oos = fold.oos_result
+        oos_sharpe = score_result(oos, "sharpe_daily")
+        sharpe_s = "n/a" if oos_sharpe == float("-inf") else f"{oos_sharpe:.2f}"
+        params_s = ", ".join(f"{k}={v}" for k, v in sorted(fold.best_params.items()))
+        typer.echo(
+            f"{fold.fold_index:<6} "
+            f"{fold.is_end_index - fold.is_start_index:>10} "
+            f"{fold.oos_end_index - fold.oos_start_index:>10} "
+            f"{float(oos.total_return_pct):>+10.2f} "
+            f"{sharpe_s:>11}  {params_s}"
+        )
+
+    if result.stitched_oos_equity:
+        start_eq = result.stitched_oos_equity[0].equity
+        end_eq = result.stitched_oos_equity[-1].equity
+        stitched_ret = (
+            Decimal("0") if start_eq == 0 else (end_eq - start_eq) / start_eq * Decimal("100")
+        )
+        typer.echo("")
+        typer.echo("=== Stitched OOS Equity (OOS segments only) ===")
+        typer.echo(f"Points:             {len(result.stitched_oos_equity)}")
+        typer.echo(f"Starting equity:    {start_eq}")
+        typer.echo(f"Ending equity:      {end_eq}")
+        typer.echo(f"Compounded return:  {_fmt_decimal_pct(stitched_ret, signed=True)}")
+
+
+@app.command("walk-forward")
+def walk_forward(
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="e.g. BTC/USDT (default: config trading.symbol)"
+    ),
+    timeframe: str | None = typer.Option(
+        None, "--timeframe", help="e.g. 1h, 4h, 1d (default: config trading.timeframe)"
+    ),
+    start: str | None = typer.Option(
+        None, "--start", help="ISO date/datetime to start from (default: earliest cached bar)."
+    ),
+    end: str | None = typer.Option(
+        None, "--end", help="ISO date/datetime to end at, exclusive (default: latest cached bar)."
+    ),
+) -> None:
+    """Run rolling walk-forward optimization (Milestone 4.5 Phase C).
+
+    For each fold: grid-search strategy params on the in-sample window, freeze
+    the winner, evaluate on the following out-of-sample window. Prints a fold
+    table and a stitched OOS equity curve (OOS segments only).
+
+    Configure windows / param_grid / objective under
+    `validation.walk_forward` in config/backtest.yaml.
+    """
+    container = _bootstrap(overlay="backtest")
+    resolved_symbol = symbol or container.config.trading.symbol
+    resolved_timeframe = timeframe or container.config.trading.timeframe
+    exchange_name = container.exchange_adapter.exchange_name
+    wf = container.config.validation.walk_forward
+
+    try:
+        if not wf.param_grid:
+            typer.echo(
+                "walk_forward.param_grid is empty — set candidate values in "
+                "config/backtest.yaml under validation.walk_forward.param_grid.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        if timeframe is not None:
+            timeframe_to_timedelta(resolved_timeframe)
+
+        rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
+        if rules is None:
+            typer.echo(
+                f"No cached instrument rules for {resolved_symbol} on {exchange_name}. "
+                "Run 'trading-platform download-data' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            start_dt = to_utc(datetime.fromisoformat(start)) if start else None
+            end_dt = to_utc(datetime.fromisoformat(end)) if end else None
+        except ValueError as exc:
+            typer.echo(f"Invalid --start/--end value: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        bars = list(
+            container.market_data_repository.load_bars(
+                resolved_symbol, resolved_timeframe, start_dt, end_dt
+            )
+        )
+        if not bars:
+            typer.echo(
+                f"No cached bars for {resolved_symbol}@{resolved_timeframe} in the "
+                "requested range. Run 'trading-platform download-data' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        _warn_on_gaps(bars, resolved_timeframe)
+
+        n_combos = 1
+        for values in wf.param_grid.values():
+            n_combos *= max(len(values), 1)
+        typer.echo(
+            f"Walk-forward {resolved_symbol}@{resolved_timeframe}: "
+            f"{len(bars)} bar(s), IS={wf.is_bars}, OOS={wf.oos_bars}, "
+            f"step={wf.step_bars}, grid={n_combos} combo(s), "
+            f"objective={wf.objective}..."
+        )
+
+        runner = WalkForwardRunner(
+            lambda params: build_backtest_engine(
+                container,
+                rules,
+                symbol=resolved_symbol,
+                timeframe=resolved_timeframe,
+                strategy_params=params,
+            ),
+            is_bars=wf.is_bars,
+            oos_bars=wf.oos_bars,
+            step_bars=wf.step_bars,
+            param_grid=wf.param_grid,
+            objective=wf.objective,
+            starting_cash=container.config.backtest.starting_cash,
+        )
+        result = runner.run(bars, resolved_timeframe)
+        _print_walk_forward_result(result)
+    except TradingPlatformError as exc:
+        typer.echo(f"Walk-forward failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -31,6 +31,36 @@ class StrategyConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class WalkForwardConfig(BaseModel):
+    """Rolling IS/OOS windows with grid search (Milestone 4.5 Phase C).
+
+    Used by `trading-platform walk-forward`. Each fold optimizes `param_grid`
+    on an in-sample window of `is_bars`, then evaluates the winning params on
+    the following `oos_bars`. The window advances by `step_bars`.
+
+    `objective` scores IS candidates (higher is better):
+    - `total_return_pct` — from `BacktestResult`
+    - `sharpe_daily` — from M5 `compute_metrics` (None treated as worst)
+    """
+
+    is_bars: int = 8760
+    oos_bars: int = 2190
+    step_bars: int = 2190
+    param_grid: dict[str, list[Any]] = Field(default_factory=dict)
+    objective: Literal["total_return_pct", "sharpe_daily"] = "sharpe_daily"
+
+    @model_validator(mode="after")
+    def _validate_window_sizes(self) -> WalkForwardConfig:
+        for name, value in (
+            ("is_bars", self.is_bars),
+            ("oos_bars", self.oos_bars),
+            ("step_bars", self.step_bars),
+        ):
+            if value < 1:
+                raise ValueError(f"walk_forward.{name} must be >= 1, got {value}")
+        return self
+
+
 class ValidationConfig(BaseModel):
     """Hold-out train/test split for backtesting (Milestone 4.5 Phase A).
 
@@ -42,12 +72,16 @@ class ValidationConfig(BaseModel):
     Dates are ISO-8601; naive values are treated as UTC (same as CLI
     `--start`/`--end`). A gap between `train_end` and `test_start` is an
     allowed embargo period for indicator warmup.
+
+    `walk_forward` configures the separate `walk-forward` CLI (Phase C);
+    it is independent of `enabled` / hold-out dates.
     """
 
     enabled: bool = False
     train_end: datetime | None = None
     test_start: datetime | None = None
     test_end: datetime | None = None
+    walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
 
     @model_validator(mode="after")
     def _require_dates_when_enabled(self) -> ValidationConfig:

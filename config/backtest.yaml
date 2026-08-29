@@ -21,6 +21,18 @@ validation:
   # test_start: "2025-01-01"     # out-of-sample starts here (inclusive)
   # test_end: null               # null = end of loaded range; optional embargo via train_end < test_start
 
+  # Walk-forward (Milestone 4.5 Phase C) — used by `trading-platform walk-forward`.
+  # Independent of `enabled` / hold-out dates. Keep the grid small for smoke tests;
+  # expand for real research runs.
+  walk_forward:
+    is_bars: 8760                # ~1y of 1h bars for IS optimization
+    oos_bars: 2190               # ~3m OOS per fold
+    step_bars: 2190              # slide by OOS length (non-overlapping OOS)
+    objective: sharpe_daily      # or total_return_pct
+    param_grid:
+      fast_period: [5, 10, 15]
+      slow_period: [20, 30, 40]
+
 # Performance analytics thresholds (Milestone 5). Defaults match the milestone
 # significance table; override bootstrap_seed for reproducible CI experiments.
 analytics:
