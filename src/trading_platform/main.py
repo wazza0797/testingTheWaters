@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import typer
 import uvicorn
 import yaml
 
 from trading_platform import __version__
+from trading_platform.analytics.report import PerformanceReport, build_performance_report
 from trading_platform.backtesting.result import BacktestResult
 from trading_platform.backtesting.validation import HoldOutValidator
-from trading_platform.config.loader import load_config
+from trading_platform.config.loader import AnalyticsConfig, load_config
 from trading_platform.config.settings import Settings
 from trading_platform.container import AppContainer, build_backtest_engine, build_container
 from trading_platform.domain.errors import TradingPlatformError
@@ -197,17 +200,106 @@ def download_data(
         raise typer.Exit(code=1) from exc
 
 
-def _print_backtest_result(title: str, result: BacktestResult) -> None:
+def _build_report(
+    result: BacktestResult,
+    bars: list[Bar],
+    analytics: AnalyticsConfig,
+) -> PerformanceReport:
+    return build_performance_report(
+        result,
+        bars,
+        min_round_trips=analytics.min_round_trips,
+        min_bars=analytics.min_bars,
+        min_daily_returns_for_sharpe=analytics.min_daily_returns_for_sharpe,
+        bootstrap_iterations=analytics.bootstrap_iterations,
+        bootstrap_seed=analytics.bootstrap_seed,
+        market_sma_period=analytics.market_sma_period,
+    )
+
+
+def _fmt_decimal_pct(value: Decimal | float | None, *, signed: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    number = float(value)
+    if signed:
+        return f"{number:+.2f}%"
+    return f"{number:.2f}%"
+
+
+def _print_performance_report(
+    title: str, result: BacktestResult, report: PerformanceReport
+) -> None:
+    m = report.metrics
     typer.echo("")
     typer.echo(f"=== {title} ===")
-    typer.echo(f"Bars processed:     {result.bars_processed}")
+    typer.echo(f"Bars processed:     {m.bars_processed}")
+    typer.echo(f"Round-trips:        {m.round_trip_count}")
     typer.echo(f"Fills:              {len(result.fills)}")
     typer.echo(f"Starting cash:      {result.starting_cash}")
     typer.echo(f"Ending cash:        {result.ending_cash}")
-    typer.echo(f"Ending equity:      {result.ending_equity}")
-    typer.echo(f"Total return:       {result.total_return_pct:.2f}%")
-    typer.echo(f"Total fees paid:    {result.total_fees_paid}")
+    typer.echo(f"Ending equity:      {m.ending_equity}")
+    typer.echo(f"Total return:       {_fmt_decimal_pct(m.total_return_pct)}")
+    typer.echo(f"Max drawdown:       {_fmt_decimal_pct(m.max_drawdown_pct)}")
+    sharpe = f"{m.sharpe_daily:.2f}" if m.sharpe_daily is not None else "n/a"
+    typer.echo(f"Sharpe (daily):     {sharpe}")
+    if m.win_rate is not None:
+        typer.echo(
+            f"Win rate:           {m.win_rate * 100:.1f}%  ({m.win_count}W / {m.loss_count}L)"
+        )
+    else:
+        typer.echo("Win rate:           n/a")
+    if m.profit_factor is None:
+        pf = "n/a"
+    elif m.profit_factor == float("inf"):
+        pf = "inf"
+    else:
+        pf = f"{m.profit_factor:.2f}"
+    typer.echo(f"Profit factor:      {pf}")
+    avg = f"{m.avg_trade_pnl}" if m.avg_trade_pnl is not None else "n/a"
+    typer.echo(f"Avg trade PnL:      {avg}")
+    typer.echo(f"Total fees paid:    {m.total_fees}")
+    if report.buy_and_hold_return_pct is not None:
+        typer.echo(
+            f"Buy & hold return:  {_fmt_decimal_pct(report.buy_and_hold_return_pct, signed=True)}"
+        )
     typer.echo(f"Final position:     {result.final_position}")
+
+    for flag in report.flags:
+        typer.echo(f"⚠ {flag.flag.value}: {flag.message}")
+
+    if report.calendar_quarters:
+        typer.echo("")
+        typer.echo("=== Regime Breakdown (calendar quarters) ===")
+        typer.echo(f"{'Period':<10} {'Return':>8} {'MaxDD':>8} {'Trips':>7} {'B&H':>8}")
+        for row in report.calendar_quarters:
+            bh = _fmt_decimal_pct(row.buy_and_hold_return_pct, signed=True)
+            typer.echo(
+                f"{row.label:<10} "
+                f"{_fmt_decimal_pct(row.return_pct, signed=True):>8} "
+                f"{_fmt_decimal_pct(row.max_drawdown_pct):>8} "
+                f"{row.round_trip_count:>7} "
+                f"{bh:>8}"
+            )
+
+    if report.market_regimes:
+        typer.echo("")
+        typer.echo("=== Regime Breakdown (market) ===")
+        typer.echo(f"{'Regime':<10} {'Return':>8} {'MaxDD':>8} {'Trips':>7} {'B&H':>8}")
+        for row in report.market_regimes:
+            bh = _fmt_decimal_pct(row.buy_and_hold_return_pct, signed=True)
+            typer.echo(
+                f"{row.label:<10} "
+                f"{_fmt_decimal_pct(row.return_pct, signed=True):>8} "
+                f"{_fmt_decimal_pct(row.max_drawdown_pct):>8} "
+                f"{row.round_trip_count:>7} "
+                f"{bh:>8}"
+            )
+
+
+def _emit_report_json(reports: dict[str, PerformanceReport]) -> None:
+    payload = {name: report.to_dict() for name, report in reports.items()}
+    typer.echo("")
+    typer.echo(json.dumps(payload, indent=2))
 
 
 def _run_single_backtest(
@@ -217,6 +309,7 @@ def _run_single_backtest(
     *,
     symbol: str,
     timeframe: str,
+    report_format: str | None,
 ) -> None:
     run = build_backtest_engine(container, rules, symbol=symbol, timeframe=timeframe)
     typer.echo(
@@ -227,7 +320,10 @@ def _run_single_backtest(
         result = run.engine.run(bars, timeframe)
     finally:
         run.teardown()
-    _print_backtest_result("Backtest Result", result)
+    report = _build_report(result, bars, container.config.analytics)
+    _print_performance_report("Backtest Result", result, report)
+    if report_format == "json":
+        _emit_report_json({"backtest": report})
 
 
 def _run_hold_out_backtest(
@@ -237,6 +333,7 @@ def _run_hold_out_backtest(
     *,
     symbol: str,
     timeframe: str,
+    report_format: str | None,
 ) -> None:
     validation = container.config.validation
     assert validation.train_end is not None and validation.test_start is not None
@@ -267,8 +364,19 @@ def _run_hold_out_backtest(
         test_end=test_end,
     )
 
-    _print_backtest_result("In-Sample (tuning only)", hold_out.is_result)
-    _print_backtest_result("Out-of-Sample (validation)", hold_out.oos_result)
+    is_bars = [b for b in bars if b.timestamp < train_end]
+    oos_bars = [
+        b
+        for b in bars
+        if b.timestamp >= test_start and (test_end is None or b.timestamp < test_end)
+    ]
+    analytics = container.config.analytics
+    is_report = _build_report(hold_out.is_result, is_bars, analytics)
+    oos_report = _build_report(hold_out.oos_result, oos_bars, analytics)
+    _print_performance_report("In-Sample (tuning only)", hold_out.is_result, is_report)
+    _print_performance_report("Out-of-Sample (validation)", hold_out.oos_result, oos_report)
+    if report_format == "json":
+        _emit_report_json({"in_sample": is_report, "out_of_sample": oos_report})
 
 
 @app.command()
@@ -285,17 +393,26 @@ def backtest(
     end: str | None = typer.Option(
         None, "--end", help="ISO date/datetime to end at, exclusive (default: latest cached bar)."
     ),
+    report: str | None = typer.Option(
+        None,
+        "--report",
+        help="Optional machine-readable output: 'json' prints PerformanceReport JSON after the summary.",
+    ),
 ) -> None:
     """Replay cached historical bars through strategy -> risk -> execution
-    with realistic simulated fills, and print the resulting trade log summary
-    and equity curve (Milestone 4 / 4.5).
+    with realistic simulated fills, and print performance analytics
+    (Milestone 4 / 4.5 / 5).
 
     When `validation.enabled` is true in config/backtest.yaml, runs an
-    in-sample then out-of-sample hold-out and prints both summaries.
+    in-sample then out-of-sample hold-out and prints both reports.
 
     Requires `trading-platform download-data` to have been run first for the
     chosen symbol/timeframe — this command never talks to an exchange.
     """
+    if report is not None and report != "json":
+        typer.echo(f"Unsupported --report value '{report}' (use 'json').", err=True)
+        raise typer.Exit(code=1)
+
     container = _bootstrap(overlay="backtest")
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
@@ -344,6 +461,7 @@ def backtest(
                 bars,
                 symbol=resolved_symbol,
                 timeframe=resolved_timeframe,
+                report_format=report,
             )
         else:
             _run_single_backtest(
@@ -352,6 +470,7 @@ def backtest(
                 bars,
                 symbol=resolved_symbol,
                 timeframe=resolved_timeframe,
+                report_format=report,
             )
     except TradingPlatformError as exc:
         typer.echo(f"Backtest failed: {exc}", err=True)

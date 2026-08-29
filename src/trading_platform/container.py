@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from trading_platform.analytics.handler import AnalyticsHandler
+from trading_platform.analytics.state import RunningPerformanceState
 from trading_platform.backtesting.broker_sim import SimBroker
 from trading_platform.backtesting.engine import BacktestEngine
 from trading_platform.backtesting.fill_simulator import FillSimulator
@@ -87,6 +89,8 @@ class AppContainer:
     market_data_repository: IMarketDataRepository
     instrument_rules_cache: InstrumentRulesCache
     data_ingest_service: DataIngestService
+    analytics_state: RunningPerformanceState
+    analytics_handler: AnalyticsHandler
 
     def observability_app(self) -> FastAPI:
         return create_app(self.prometheus_collector, self.health)
@@ -102,6 +106,14 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     metrics_handler = MetricsHandler(tracked_metrics)
     for event_type in _METRICS_HANDLER_EVENT_TYPES:
         event_bus.subscribe(event_type, metrics_handler)
+
+    analytics_state = RunningPerformanceState(
+        starting_cash=config.backtest.starting_cash,
+    )
+    analytics_handler = AnalyticsHandler(analytics_state)
+    event_bus.subscribe(FillReceived, analytics_handler)
+    event_bus.subscribe(OrderRejected, analytics_handler)
+    event_bus.subscribe(RiskRejected, analytics_handler)
 
     system_monitor = SystemMonitor(tracked_metrics)
     summary_logger = PeriodicSummaryLogger(
@@ -127,6 +139,8 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
         market_data_repository=market_data_repository,
         instrument_rules_cache=instrument_rules_cache,
         data_ingest_service=data_ingest_service,
+        analytics_state=analytics_state,
+        analytics_handler=analytics_handler,
     )
 
 
@@ -148,6 +162,7 @@ class BacktestRun:
     event_bus: IEventBus
     symbol: str
     timeframe: str
+    analytics_handler: AnalyticsHandler | None = None
 
     def teardown(self) -> None:
         """Stop the strategy and unsubscribe this run's handlers from the bus."""
@@ -155,6 +170,13 @@ class BacktestRun:
         self.event_bus.unsubscribe(BarClosed, self.strategy_handler)
         self.event_bus.unsubscribe(SignalGenerated, self.risk_handler)
         self.event_bus.unsubscribe(OrderApproved, self.execution_handler)
+        # Re-attach analytics after a backtest window — M5 reports from
+        # `BacktestResult` post-run; the live handler must not accumulate
+        # simulated fills (see Milestone 5 design §6).
+        if self.analytics_handler is not None:
+            self.event_bus.subscribe(FillReceived, self.analytics_handler)
+            self.event_bus.subscribe(OrderRejected, self.analytics_handler)
+            self.event_bus.subscribe(RiskRejected, self.analytics_handler)
 
 
 def build_backtest_engine(
@@ -244,6 +266,12 @@ def build_backtest_engine(
     container.event_bus.subscribe(SignalGenerated, risk_handler)
     container.event_bus.subscribe(OrderApproved, execution_handler)
 
+    # Bypass AnalyticsHandler during simulated fills — post-run
+    # `PerformanceReport` over `BacktestResult` is the source of truth.
+    container.event_bus.unsubscribe(FillReceived, container.analytics_handler)
+    container.event_bus.unsubscribe(OrderRejected, container.analytics_handler)
+    container.event_bus.unsubscribe(RiskRejected, container.analytics_handler)
+
     engine = BacktestEngine(container.event_bus, broker, ledger, symbol)
 
     return BacktestRun(
@@ -254,4 +282,5 @@ def build_backtest_engine(
         event_bus=container.event_bus,
         symbol=symbol,
         timeframe=timeframe,
+        analytics_handler=container.analytics_handler,
     )

@@ -1,6 +1,6 @@
 # Milestone 5 — Performance Analytics
 
-**Status:** Planned
+**Status:** Complete
 
 **Depends on:** Milestone 4 (Backtesting Engine); Milestone 4.5 Phase A
 recommended (hold-out validation) so analytics can report IS vs OOS separately.
@@ -56,7 +56,7 @@ Walk-forward (M4.5 Phase C) needs M5 metrics to score OOS windows meaningfully
 
 ---
 
-## Design Decisions (to confirm before implementation)
+## Design Decisions (confirmed)
 
 ### 1. Analytics input contract — `BacktestResult` only for backtest
 

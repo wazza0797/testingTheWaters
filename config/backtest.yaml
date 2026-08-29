@@ -21,6 +21,16 @@ validation:
   # test_start: "2025-01-01"     # out-of-sample starts here (inclusive)
   # test_end: null               # null = end of loaded range; optional embargo via train_end < test_start
 
+# Performance analytics thresholds (Milestone 5). Defaults match the milestone
+# significance table; override bootstrap_seed for reproducible CI experiments.
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
 # Reference strategy run by `trading-platform backtest` — see
 # strategies/examples/sma_crossover.py. Swap `path`/`params` to backtest a
 # different strategy; no code changes required (strategies/loader.py).
