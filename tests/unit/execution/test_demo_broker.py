@@ -137,4 +137,6 @@ class TestDemoBroker:
         second = broker.poll_fills()
         assert len(second) == 1
         assert second[0][1].filled_qty == Decimal("0.006")
+        # Slice price from cumulative VWAP: (0.01*100 - 0.004*99) / 0.006
+        assert second[0][1].fill_price == Decimal("100.66666667")
         assert second[0][1].is_complete is True

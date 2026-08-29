@@ -155,9 +155,17 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     health = HealthStatus()
 
     data_dir = Path(settings.data_dir)
+    # Public market-data adapter for ingest/paper/backtest/serve. Never force
+    # DEMO credentials onto those commands when ENV=demo is set globally —
+    # `build_demo_session` constructs its own sandbox adapter for orders.
+    default_adapter_mode = (
+        Environment.PAPER
+        if settings.environment == Environment.DEMO
+        else settings.environment
+    )
     exchange_adapter = build_exchange_adapter(
         config.trading.exchange,
-        settings.environment,
+        default_adapter_mode,
         settings,
     )
     market_data_repository = ParquetMarketDataRepository(data_dir, exchange=config.trading.exchange)
