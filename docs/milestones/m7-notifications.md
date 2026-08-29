@@ -18,7 +18,10 @@ event subscriptions so execution/risk never import notifiers.
    `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`). Missing remotes → console only.
 2. **Fan-out:** `CompositeNotifier` inside `NotificationHandler`
 3. **Isolation:** handler catches its own exceptions; composite isolates
-   per-channel failures so one remote never blocks console (or vice versa)
+   per-channel failures so one remote never blocks console (or vice versa).
+   `NotificationHandler` dispatches via a thread pool so Discord/Telegram HTTP
+   never stalls the event-bus / portfolio path. Backtest unsubscribes fill/
+   reject notifications (same pattern as analytics) to avoid remote spam.
 4. **Out of scope:** daily digest scheduling, email, live-order audit
 
 ## Components

@@ -267,3 +267,25 @@ class TestNotificationHandler:
 
         handler = NotificationHandler(Boom())
         handler.handle(Heartbeat(mode="paper", uptime_seconds=1.0))
+
+    def test_async_dispatch_returns_before_notify_finishes(self) -> None:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        started = threading.Event()
+        release = threading.Event()
+        done: list[str] = []
+
+        class Slow:
+            def notify(self, message: str, level: str = "info") -> None:
+                started.set()
+                assert release.wait(timeout=2.0)
+                done.append(message)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            handler = NotificationHandler(Slow(), executor=executor)
+            handler.handle(Heartbeat(mode="paper", uptime_seconds=1.0))
+            assert started.wait(timeout=1.0)
+            assert done == []
+            release.set()
+        assert done == ["HEARTBEAT mode=paper uptime=1.0s"]
