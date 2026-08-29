@@ -7,6 +7,7 @@ from datetime import datetime
 
 from trading_platform.domain.events.execution import FillReceived
 from trading_platform.domain.events.market import BarClosed
+from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.execution.paper_broker import PaperBroker
@@ -19,8 +20,8 @@ class PaperTradingLoop:
     """Poll for new closed bars; process paper fills; publish `BarClosed`.
 
     Stops when `should_stop()` returns True (e.g. KeyboardInterrupt flag).
-    Idle polls emit a heartbeat so a quiet terminal still shows the process
-    is alive while waiting for the next closed candle.
+    Idle polls emit a heartbeat (CLI callback + `Heartbeat` event) so a quiet
+    terminal and NotificationHandler both see that the process is alive.
     """
 
     def __init__(
@@ -36,6 +37,7 @@ class PaperTradingLoop:
         should_stop: Callable[[], bool] | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
         on_heartbeat: Callable[[str], None] | None = None,
+        monotonic_fn: Callable[[], float] = time.monotonic,
     ) -> None:
         self._event_bus = event_bus
         self._feed = feed
@@ -47,6 +49,8 @@ class PaperTradingLoop:
         self._should_stop = should_stop or (lambda: False)
         self._sleep = sleep_fn
         self._on_heartbeat = on_heartbeat
+        self._monotonic = monotonic_fn
+        self._started_at: float | None = None
 
     @property
     def last_bar_timestamp(self) -> datetime | None:
@@ -55,6 +59,7 @@ class PaperTradingLoop:
     def run(self) -> int:
         """Block until stopped. Returns the number of new bars processed."""
         processed = 0
+        self._started_at = self._monotonic()
         logger.info(
             "paper_loop_started",
             extra={
@@ -80,6 +85,8 @@ class PaperTradingLoop:
         return processed
 
     def _emit_heartbeat(self) -> None:
+        started = self._started_at if self._started_at is not None else self._monotonic()
+        uptime = self._monotonic() - started
         last = (
             self._last_bar_timestamp.isoformat()
             if self._last_bar_timestamp is not None
@@ -91,6 +98,7 @@ class PaperTradingLoop:
             f"poll every {self._poll_interval_sec:g}s)"
         )
         logger.info("paper_heartbeat", extra={"last_bar": last})
+        self._event_bus.publish(Heartbeat(mode="paper", uptime_seconds=uptime))
         if self._on_heartbeat is not None:
             self._on_heartbeat(message)
 

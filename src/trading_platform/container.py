@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ from trading_platform.domain.events.execution import FillReceived, OrderRejected
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.events.risk import OrderApproved, RiskRejected
 from trading_platform.domain.events.strategy import SignalGenerated
-from trading_platform.domain.events.system import Heartbeat
+from trading_platform.domain.events.system import ErrorOccurred, Heartbeat
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.domain.ports.exchange import IExchangeAdapter
@@ -41,6 +42,8 @@ from trading_platform.market_data.feed import PollingMarketDataFeed
 from trading_platform.market_data.ingest import DataIngestService
 from trading_platform.market_data.instrument_rules_cache import InstrumentRulesCache
 from trading_platform.market_data.repository.parquet import ParquetMarketDataRepository
+from trading_platform.notifications.factory import build_notifier
+from trading_platform.notifications.handler import NotificationHandler
 from trading_platform.observability.handler import MetricsHandler
 from trading_platform.observability.server import HealthStatus, create_app
 from trading_platform.observability.summary import (
@@ -102,6 +105,8 @@ class AppContainer:
     data_ingest_service: DataIngestService
     analytics_state: RunningPerformanceState
     analytics_handler: AnalyticsHandler
+    notification_handler: NotificationHandler
+    notification_executor: Executor
 
     def observability_app(self) -> FastAPI:
         return create_app(self.prometheus_collector, self.health)
@@ -125,6 +130,20 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     event_bus.subscribe(FillReceived, analytics_handler)
     event_bus.subscribe(OrderRejected, analytics_handler)
     event_bus.subscribe(RiskRejected, analytics_handler)
+
+    notification_executor = ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="notify",
+    )
+    notification_handler = NotificationHandler(
+        build_notifier(settings),
+        executor=notification_executor,
+    )
+    event_bus.subscribe(FillReceived, notification_handler)
+    event_bus.subscribe(RiskRejected, notification_handler)
+    event_bus.subscribe(OrderRejected, notification_handler)
+    event_bus.subscribe(ErrorOccurred, notification_handler)
+    event_bus.subscribe(Heartbeat, notification_handler)
 
     system_monitor = SystemMonitor(tracked_metrics)
     summary_logger = PeriodicSummaryLogger(
@@ -152,6 +171,8 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
         data_ingest_service=data_ingest_service,
         analytics_state=analytics_state,
         analytics_handler=analytics_handler,
+        notification_handler=notification_handler,
+        notification_executor=notification_executor,
     )
 
 
@@ -174,6 +195,7 @@ class BacktestRun:
     symbol: str
     timeframe: str
     analytics_handler: AnalyticsHandler | None = None
+    notification_handler: NotificationHandler | None = None
 
     def teardown(self) -> None:
         """Stop the strategy and unsubscribe this run's handlers from the bus."""
@@ -188,6 +210,11 @@ class BacktestRun:
             self.event_bus.subscribe(FillReceived, self.analytics_handler)
             self.event_bus.subscribe(OrderRejected, self.analytics_handler)
             self.event_bus.subscribe(RiskRejected, self.analytics_handler)
+        # Same for notifications — avoid remote spam from simulated fills.
+        if self.notification_handler is not None:
+            self.event_bus.subscribe(FillReceived, self.notification_handler)
+            self.event_bus.subscribe(OrderRejected, self.notification_handler)
+            self.event_bus.subscribe(RiskRejected, self.notification_handler)
 
 
 def build_backtest_engine(
@@ -290,6 +317,11 @@ def build_backtest_engine(
     container.event_bus.unsubscribe(FillReceived, container.analytics_handler)
     container.event_bus.unsubscribe(OrderRejected, container.analytics_handler)
     container.event_bus.unsubscribe(RiskRejected, container.analytics_handler)
+    # Bypass NotificationHandler too — Discord/Telegram must not fire on
+    # every simulated fill when paper remotes are configured in `.env`.
+    container.event_bus.unsubscribe(FillReceived, container.notification_handler)
+    container.event_bus.unsubscribe(OrderRejected, container.notification_handler)
+    container.event_bus.unsubscribe(RiskRejected, container.notification_handler)
 
     engine = BacktestEngine(container.event_bus, broker, ledger, symbol)
 
@@ -302,6 +334,7 @@ def build_backtest_engine(
         symbol=symbol,
         timeframe=timeframe,
         analytics_handler=container.analytics_handler,
+        notification_handler=container.notification_handler,
     )
 
 
@@ -413,8 +446,12 @@ def build_paper_session(
     container.event_bus.subscribe(BarClosed, strategy_handler)
     container.event_bus.subscribe(SignalGenerated, risk_handler)
     container.event_bus.subscribe(OrderApproved, execution_handler)
+    # Portfolio must see fills before NotificationHandler is (re)queued on the
+    # same event — detach notify, attach portfolio, then re-attach notify last.
+    container.event_bus.unsubscribe(FillReceived, container.notification_handler)
     container.event_bus.subscribe(FillReceived, portfolio_handler)
     container.event_bus.subscribe(BarClosed, portfolio_handler)
+    container.event_bus.subscribe(FillReceived, container.notification_handler)
 
     feed = PollingMarketDataFeed(container.exchange_adapter)
     loop = PaperTradingLoop(
