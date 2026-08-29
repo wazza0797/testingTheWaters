@@ -10,6 +10,7 @@ from trading_platform.domain.errors import ConfigurationError
 
 class Environment(StrEnum):
     PAPER = "paper"
+    DEMO = "demo"
     LIVE = "live"
     BACKTEST = "backtest"
 
@@ -36,6 +37,11 @@ class Settings(BaseSettings):
 
     binance_api_key: str | None = Field(default=None, validation_alias="BINANCE_API_KEY")
     binance_api_secret: str | None = Field(default=None, validation_alias="BINANCE_API_SECRET")
+    # Demo Trading keys (demo.binance.com) — never reuse live keys here.
+    binance_demo_api_key: str | None = Field(default=None, validation_alias="BINANCE_DEMO_API_KEY")
+    binance_demo_api_secret: str | None = Field(
+        default=None, validation_alias="BINANCE_DEMO_API_SECRET"
+    )
 
     telegram_bot_token: str | None = Field(default=None, validation_alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")

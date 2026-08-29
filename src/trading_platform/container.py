@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from trading_platform.analytics.handler import AnalyticsHandler
 from trading_platform.analytics.state import RunningPerformanceState
+from trading_platform.application.demo_loop import DemoTradingLoop
 from trading_platform.application.paper_loop import PaperTradingLoop
 from trading_platform.backtesting.broker_sim import SimBroker
 from trading_platform.backtesting.engine import BacktestEngine
@@ -21,7 +22,7 @@ from trading_platform.backtesting.models.partial_fill_model import PartialFillMo
 from trading_platform.backtesting.models.spread_model import SpreadModel, max_half_spread_fraction
 from trading_platform.backtesting.order_queue import OrderQueue
 from trading_platform.config.loader import AppConfig
-from trading_platform.config.settings import Settings
+from trading_platform.config.settings import Environment, Settings
 from trading_platform.domain.errors import ConfigurationError
 from trading_platform.domain.events.execution import FillReceived, OrderRejected
 from trading_platform.domain.events.market import BarClosed
@@ -32,7 +33,8 @@ from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.domain.ports.exchange import IExchangeAdapter
 from trading_platform.domain.ports.market_data import IMarketDataRepository
-from trading_platform.exchanges.binance.adapter import BinanceAdapter
+from trading_platform.exchanges.factory import build_exchange_adapter
+from trading_platform.execution.demo_broker import DemoBroker
 from trading_platform.execution.handler import ExecutionHandler
 from trading_platform.execution.paper_broker import PaperBroker
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
@@ -57,6 +59,7 @@ from trading_platform.portfolio.persistence import (
     JsonPaperStateStore,
     book_from_snapshot,
 )
+from trading_platform.portfolio.seed import seed_book_from_exchange
 from trading_platform.risk.engine import PassThroughRiskEngine
 from trading_platform.risk.handler import RiskHandler
 from trading_platform.risk.sizing import EquityFractionSizer
@@ -152,7 +155,11 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     health = HealthStatus()
 
     data_dir = Path(settings.data_dir)
-    exchange_adapter = BinanceAdapter()
+    exchange_adapter = build_exchange_adapter(
+        config.trading.exchange,
+        settings.environment,
+        settings,
+    )
     market_data_repository = ParquetMarketDataRepository(data_dir, exchange=config.trading.exchange)
     instrument_rules_cache = InstrumentRulesCache(data_dir)
     data_ingest_service = DataIngestService(exchange_adapter, market_data_repository, event_bus)
@@ -467,6 +474,149 @@ def build_paper_session(
     )
 
     return PaperSession(
+        loop=loop,
+        portfolio_handler=portfolio_handler,
+        strategy_handler=strategy_handler,
+        risk_handler=risk_handler,
+        execution_handler=execution_handler,
+        event_bus=container.event_bus,
+        symbol=symbol,
+        timeframe=timeframe,
+        state_path=state_path,
+    )
+
+
+@dataclass
+class DemoSession:
+    """Wired demo-trading session: exchange sandbox broker + portfolio from balances."""
+
+    loop: DemoTradingLoop
+    portfolio_handler: PortfolioHandler
+    strategy_handler: StrategyHandler
+    risk_handler: RiskHandler
+    execution_handler: ExecutionHandler
+    event_bus: IEventBus
+    symbol: str
+    timeframe: str
+    state_path: Path
+
+    def teardown(self) -> None:
+        self.strategy_handler.stop()
+        self.event_bus.unsubscribe(BarClosed, self.strategy_handler)
+        self.event_bus.unsubscribe(SignalGenerated, self.risk_handler)
+        self.event_bus.unsubscribe(OrderApproved, self.execution_handler)
+        self.event_bus.unsubscribe(FillReceived, self.portfolio_handler)
+        self.event_bus.unsubscribe(BarClosed, self.portfolio_handler)
+
+
+def build_demo_session(
+    container: AppContainer,
+    instrument_rules: InstrumentRules,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_heartbeat: Callable[[str], None] | None = None,
+) -> DemoSession:
+    """Wire strategy → risk → demo broker → portfolio for `trading-platform demo`.
+
+    Requires `ENV=demo`. Cash/positions are seeded from the exchange adapter
+    balances (not a local starting_cash). `trading.exchange` selects the adapter.
+    """
+    if container.settings.environment != Environment.DEMO:
+        raise ConfigurationError(
+            "trading-platform demo requires ENV=demo "
+            "(and BINANCE_DEMO_API_KEY / BINANCE_DEMO_API_SECRET for Binance)."
+        )
+
+    config = container.config
+    symbol = symbol or config.trading.symbol
+    timeframe = timeframe or config.trading.timeframe
+    demo_cfg = config.demo
+    backtest_config = config.backtest
+
+    if config.strategy.path is None:
+        raise ConfigurationError(
+            "No strategy configured for demo trading — set 'strategy.path' in config/demo.yaml."
+        )
+
+    # Re-bind adapter for this exchange+demo mode (container may have been built
+    # before ENV was set correctly in tests).
+    adapter = build_exchange_adapter(
+        config.trading.exchange,
+        Environment.DEMO,
+        container.settings,
+    )
+
+    state_path = Path(container.settings.data_dir) / demo_cfg.state_file
+    store = JsonPaperStateStore(state_path)
+    snapshot = store.load()
+    last_bar_ts = snapshot.last_bar_timestamp if snapshot is not None else None
+
+    book = seed_book_from_exchange(adapter, symbol, timeframe=timeframe)
+    if snapshot is not None:
+        # Preserve fill history for analytics; cash/positions come from the venue.
+        container.analytics_state.fills.clear()
+        container.analytics_state.fills.extend(snapshot.fills)
+        book = PortfolioBook.from_snapshot(
+            book.cash,
+            book.positions,
+            timestamp=book.timestamp,
+            fills=list(snapshot.fills),
+        )
+    container.analytics_state.starting_cash = book.cash
+
+    portfolio_handler = PortfolioHandler(book, store, last_bar_timestamp=last_bar_ts)
+    rules_by_symbol = {symbol: instrument_rules}
+    broker = DemoBroker(adapter)
+
+    sizer = EquityFractionSizer(backtest_config.position_size_pct)
+    risk_engine = PassThroughRiskEngine(
+        portfolio_handler,
+        rules_by_symbol,
+        sizer,
+        broker,
+        cash_safety_buffer_pct=backtest_config.cash_safety_buffer_pct,
+        fill_cost_fraction=0.0,
+    )
+    risk_handler = RiskHandler(risk_engine, container.event_bus)
+    execution_handler = ExecutionHandler(broker, rules_by_symbol, container.event_bus)
+
+    params = dict(config.strategy.params)
+    strategy = instantiate_strategy(config.strategy.path, params)
+    strategy_name = describe_strategy(config.strategy.path, symbol, params)
+    strategy_context = DefaultStrategyContext(
+        symbol=symbol,
+        timeframe=timeframe,
+        params=params,
+        position_provider=portfolio_handler,
+    )
+    strategy_handler = StrategyHandler(
+        strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name
+    )
+
+    container.event_bus.subscribe(BarClosed, strategy_handler)
+    container.event_bus.subscribe(SignalGenerated, risk_handler)
+    container.event_bus.subscribe(OrderApproved, execution_handler)
+    container.event_bus.unsubscribe(FillReceived, container.notification_handler)
+    container.event_bus.subscribe(FillReceived, portfolio_handler)
+    container.event_bus.subscribe(BarClosed, portfolio_handler)
+    container.event_bus.subscribe(FillReceived, container.notification_handler)
+
+    feed = PollingMarketDataFeed(adapter)
+    loop = DemoTradingLoop(
+        container.event_bus,
+        feed,
+        broker,
+        symbol=symbol,
+        timeframe=timeframe,
+        poll_interval_sec=demo_cfg.order_poll_interval_sec,
+        last_bar_timestamp=last_bar_ts,
+        should_stop=should_stop,
+        on_heartbeat=on_heartbeat,
+    )
+
+    return DemoSession(
         loop=loop,
         portfolio_handler=portfolio_handler,
         strategy_handler=strategy_handler,

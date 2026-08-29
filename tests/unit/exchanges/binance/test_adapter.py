@@ -8,6 +8,7 @@ import ccxt
 import pytest
 
 from trading_platform.domain.errors import ExchangeAdapterError
+from trading_platform.domain.models.order import Order, OrderSide, OrderType
 from trading_platform.exchanges.binance.adapter import BinanceAdapter
 
 
@@ -19,12 +20,20 @@ class FakeCcxtExchange:
         markets: dict[str, Any] | None = None,
         ohlcv_rows: list[list[Any]] | None = None,
         ohlcv_error: Exception | None = None,
+        *,
+        create_order_result: dict[str, Any] | None = None,
+        fetch_order_result: dict[str, Any] | None = None,
+        balance: dict[str, Any] | None = None,
     ) -> None:
         self.markets = markets or {}
         self._ohlcv_rows = ohlcv_rows or []
         self._ohlcv_error = ohlcv_error
         self.load_markets_calls = 0
         self.fetch_ohlcv_calls: list[dict[str, Any]] = []
+        self.create_order_calls: list[dict[str, Any]] = []
+        self._create_order_result = create_order_result or {"id": "ex-1"}
+        self._fetch_order_result = fetch_order_result
+        self._balance = balance or {"free": {"USDT": 1000, "BTC": 0}}
 
     def load_markets(self) -> dict[str, Any]:
         self.load_markets_calls += 1
@@ -43,6 +52,57 @@ class FakeCcxtExchange:
         if self._ohlcv_error is not None:
             raise self._ohlcv_error
         return self._ohlcv_rows
+
+    def create_order(
+        self,
+        symbol: str,
+        type: str,
+        side: str,
+        amount: float,
+        price: float | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self.create_order_calls.append(
+            {
+                "symbol": symbol,
+                "type": type,
+                "side": side,
+                "amount": amount,
+                "price": price,
+                "params": params or {},
+            }
+        )
+        return dict(self._create_order_result)
+
+    def cancel_order(
+        self, id: str, symbol: str | None = None, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return {"id": id}
+
+    def fetch_order(
+        self, id: str, symbol: str | None = None, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if self._fetch_order_result is not None:
+            return dict(self._fetch_order_result)
+        return {
+            "id": id,
+            "symbol": symbol or "BTC/USDT",
+            "side": "buy",
+            "type": "market",
+            "status": "closed",
+            "amount": 0.01,
+            "filled": 0.01,
+            "remaining": 0,
+            "average": 100,
+            "timestamp": 1704067200000,
+            "fee": {"cost": 0.01, "currency": "USDT"},
+        }
+
+    def fetch_balance(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._balance
+
+    def enable_demo_trading(self, enabled: bool) -> None:
+        self.demo_enabled = enabled
 
 
 BTC_MARKET = {
@@ -114,18 +174,36 @@ class TestFetchInstrumentRules:
             adapter.fetch_instrument_rules("DOES/NOTEXIST")
 
 
-class TestUnimplementedLiveMethods:
-    def test_place_order_raises_not_implemented(self) -> None:
-        adapter = BinanceAdapter(exchange=FakeCcxtExchange())
-        with pytest.raises(NotImplementedError):
-            adapter.place_order(object())  # type: ignore[arg-type]
+class TestTradingMethods:
+    def test_place_order_returns_exchange_id(self) -> None:
+        fake = FakeCcxtExchange(markets={"BTC/USDT": BTC_MARKET})
+        adapter = BinanceAdapter(exchange=fake)
+        order = Order(
+            order_id="c1",
+            correlation_id="r1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal("0.01"),
+            price=None,
+            strategy_name="t",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        assert adapter.place_order(order) == "ex-1"
+        assert fake.create_order_calls[0]["symbol"] == "BTC/USDT"
 
-    def test_cancel_order_raises_not_implemented(self) -> None:
-        adapter = BinanceAdapter(exchange=FakeCcxtExchange())
-        with pytest.raises(NotImplementedError):
-            adapter.cancel_order("123", "BTC/USDT")
+    def test_get_balance_reads_free(self) -> None:
+        fake = FakeCcxtExchange(balance={"free": {"USDT": "123.45"}})
+        adapter = BinanceAdapter(exchange=fake)
+        assert adapter.get_balance("USDT") == Decimal("123.45")
 
-    def test_get_balance_raises_not_implemented(self) -> None:
-        adapter = BinanceAdapter(exchange=FakeCcxtExchange())
-        with pytest.raises(NotImplementedError):
-            adapter.get_balance("USDT")
+    def test_fetch_order_maps_status(self) -> None:
+        fake = FakeCcxtExchange()
+        adapter = BinanceAdapter(exchange=fake)
+        status = adapter.fetch_order("ex-1", "BTC/USDT")
+        assert status.exchange_order_id == "ex-1"
+        assert status.filled_quantity == Decimal("0.01")
+
+    def test_for_demo_requires_credentials(self) -> None:
+        with pytest.raises(ExchangeAdapterError, match="BINANCE_DEMO"):
+            BinanceAdapter.for_demo(api_key=None, api_secret=None)

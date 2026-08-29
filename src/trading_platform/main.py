@@ -19,11 +19,12 @@ from trading_platform.backtesting.result import BacktestResult
 from trading_platform.backtesting.validation import HoldOutValidator
 from trading_platform.backtesting.walk_forward import WalkForwardResult, WalkForwardRunner
 from trading_platform.config.loader import AnalyticsConfig, load_config
-from trading_platform.config.settings import Settings
+from trading_platform.config.settings import Environment, Settings
 from trading_platform.container import (
     AppContainer,
     build_backtest_engine,
     build_container,
+    build_demo_session,
     build_paper_session,
 )
 from trading_platform.domain.errors import TradingPlatformError
@@ -684,6 +685,78 @@ def paper(
         )
     except TradingPlatformError as exc:
         typer.echo(f"Paper trading failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def demo(
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="e.g. BTC/USDT (default: config trading.symbol)"
+    ),
+    timeframe: str | None = typer.Option(
+        None, "--timeframe", help="e.g. 1h (default: config trading.timeframe)"
+    ),
+) -> None:
+    """Run exchange demo/practice trading (Milestone 8a).
+
+    Requires ENV=demo and venue demo API keys (e.g. BINANCE_DEMO_API_KEY /
+    BINANCE_DEMO_API_SECRET). Cash and positions are read from the exchange
+    account — not a local starting_cash. Orders go to the sandbox selected by
+    trading.exchange. Press Ctrl+C to stop.
+    """
+    container = _bootstrap(overlay="demo")
+    if container.settings.environment != Environment.DEMO:
+        typer.echo(
+            "demo requires ENV=demo in .env (and BINANCE_DEMO_* keys for Binance).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    resolved_symbol = symbol or container.config.trading.symbol
+    resolved_timeframe = timeframe or container.config.trading.timeframe
+    exchange_name = container.config.trading.exchange
+
+    try:
+        if timeframe is not None:
+            timeframe_to_timedelta(resolved_timeframe)
+
+        rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
+        if rules is None:
+            typer.echo(
+                f"No cached instrument rules for {resolved_symbol} on {exchange_name}. "
+                "Run 'trading-platform download-data' first (rules are cached locally).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        session = build_demo_session(
+            container,
+            rules,
+            symbol=resolved_symbol,
+            timeframe=resolved_timeframe,
+            on_heartbeat=typer.echo,
+        )
+        portfolio = session.portfolio_handler
+        typer.echo(
+            f"Demo trading on {exchange_name}: {session.symbol}@{session.timeframe} — "
+            f"cash={portfolio.cash} (from exchange), "
+            f"position={portfolio.position_for(session.symbol)}, "
+            f"state={session.state_path}"
+        )
+        if portfolio.last_bar_timestamp is not None:
+            typer.echo(f"Resuming bar cursor after {portfolio.last_bar_timestamp.isoformat()}")
+        typer.echo("Polling fills + closed candles (Ctrl+C to stop)...")
+        try:
+            bars = session.loop.run()
+        finally:
+            session.teardown()
+
+        typer.echo(
+            f"Stopped. bars_processed={bars}, cash={portfolio.cash}, "
+            f"position={portfolio.position_for(session.symbol)}"
+        )
+    except TradingPlatformError as exc:
+        typer.echo(f"Demo trading failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
 

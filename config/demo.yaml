@@ -1,0 +1,23 @@
+# Demo-trading overlay — merged over default.yaml when running
+# `trading-platform demo` (Milestone 8a). Orders go to the exchange sandbox
+# selected by `trading.exchange` (factory → adapter); not local FillSimulator.
+trading:
+  exchange: binance
+  symbol: BTC/USDT
+  timeframe: 1h
+
+demo:
+  poll_interval_sec: 30          # closed-bar poll (same idea as paper)
+  order_poll_interval_sec: 5     # how often DemoBroker polls fetch_order
+  state_file: "demo_state.json"  # relative to DATA_DIR
+
+# Position sizing still uses backtest risk knobs until demo-specific sizing lands.
+backtest:
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

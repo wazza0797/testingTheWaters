@@ -4,9 +4,9 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–7 complete (including paper trading and
-> console / Discord / Telegram notifications). Live execution and Docker are
-> still ahead — see [`docs/milestones/`](docs/milestones/) and the project plan.
+> **Status:** Milestones 0–7 complete. Milestone 8a (exchange demo/practice
+> execution) is in progress — see [`docs/milestones/`](docs/milestones/) and the
+> project plan. Local paper trading remains available; mainnet live is later.
 
 ## Non-Goals (for now)
 
@@ -113,6 +113,10 @@ uv run trading-platform walk-forward
 # 4. Paper trade (Milestone 6) — polls live closed candles with virtual cash;
 #    state persists under DATA_DIR/paper_state.json (Ctrl+C to stop)
 uv run trading-platform paper
+
+# 5. Exchange demo (Milestone 8a) — ENV=demo + BINANCE_DEMO_* keys;
+#    cash/positions from the sandbox account; orders hit demo-api
+# uv run trading-platform demo
 ```
 
 Prints a performance report (round-trips, total return, max drawdown, Sharpe,
@@ -166,9 +170,10 @@ Full milestone breakdown (goals, deliverables, tests, acceptance criteria) is
 tracked in the project plan and mirrored under
 [`docs/milestones/`](docs/milestones/) as each milestone lands.
 
-**Next up (planned, not yet implemented):**
+**Next up:**
 
 | Milestone | Focus |
 |-----------|-------|
-| M8 | Live execution (double-gated) |
+| M8a | Demo/practice execution via `DemoBroker` (any exchange adapter) |
 | M9 | Docker deployment |
+| M8b | Mainnet live (double-gated; after demo soak) |

@@ -5,17 +5,18 @@ from decimal import Decimal
 from typing import Protocol
 
 from trading_platform.domain.models.bar import Bar
+from trading_platform.domain.models.exchange_order import ExchangeOrderStatus
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.models.order import Order
 
 
 class IExchangeAdapter(Protocol):
-    """Isolates all exchange-specific (ccxt/Binance/...) code behind one port.
+    """Isolates all exchange-specific (ccxt/Binance/Trading212/...) code behind one port.
 
-    Application code (market data ingest, execution, backtest) depends only on
-    this Protocol — never on ccxt or a specific exchange module. Concrete
-    implementations live under `exchanges/<name>/` (e.g. `exchanges/binance/`)
-    and are the *only* place exchange-specific fields/quirks may appear.
+    Application code (market data ingest, execution, backtest, demo) depends
+    only on this Protocol — never on a vendor SDK. Concrete implementations
+    live under `exchanges/<name>/` and are the *only* place exchange-specific
+    fields, demo/live base URLs, and auth quirks may appear.
     """
 
     @property
@@ -42,3 +43,7 @@ class IExchangeAdapter(Protocol):
     def cancel_order(self, order_id: str, symbol: str) -> None: ...
 
     def get_balance(self, asset: str) -> Decimal: ...
+
+    def fetch_order(self, order_id: str, symbol: str) -> ExchangeOrderStatus:
+        """Poll a previously placed order for status / cumulative fills."""
+        ...
