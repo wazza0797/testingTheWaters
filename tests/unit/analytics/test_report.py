@@ -14,6 +14,7 @@ from trading_platform.domain.models.order import OrderSide
 from trading_platform.main import app
 
 UTC_TS = datetime(2024, 1, 1, tzinfo=UTC)
+_HELP_ENV = {"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}
 runner = CliRunner()
 
 
@@ -67,7 +68,7 @@ class TestPerformanceReportPipeline:
 
 class TestBacktestCliReportFlag:
     def test_help_lists_report_flag(self) -> None:
-        result = runner.invoke(app, ["backtest", "--help"])
+        result = runner.invoke(app, ["backtest", "--help"], env=_HELP_ENV)
         assert result.exit_code == 0
         assert "--report" in result.output
 
