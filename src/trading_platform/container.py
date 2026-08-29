@@ -26,7 +26,7 @@ from trading_platform.domain.events.execution import FillReceived, OrderRejected
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.events.risk import OrderApproved, RiskRejected
 from trading_platform.domain.events.strategy import SignalGenerated
-from trading_platform.domain.events.system import Heartbeat
+from trading_platform.domain.events.system import ErrorOccurred, Heartbeat
 from trading_platform.domain.models.instrument_rules import InstrumentRules
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.domain.ports.exchange import IExchangeAdapter
@@ -41,6 +41,8 @@ from trading_platform.market_data.feed import PollingMarketDataFeed
 from trading_platform.market_data.ingest import DataIngestService
 from trading_platform.market_data.instrument_rules_cache import InstrumentRulesCache
 from trading_platform.market_data.repository.parquet import ParquetMarketDataRepository
+from trading_platform.notifications.factory import build_notifier
+from trading_platform.notifications.handler import NotificationHandler
 from trading_platform.observability.handler import MetricsHandler
 from trading_platform.observability.server import HealthStatus, create_app
 from trading_platform.observability.summary import (
@@ -102,6 +104,7 @@ class AppContainer:
     data_ingest_service: DataIngestService
     analytics_state: RunningPerformanceState
     analytics_handler: AnalyticsHandler
+    notification_handler: NotificationHandler
 
     def observability_app(self) -> FastAPI:
         return create_app(self.prometheus_collector, self.health)
@@ -125,6 +128,13 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
     event_bus.subscribe(FillReceived, analytics_handler)
     event_bus.subscribe(OrderRejected, analytics_handler)
     event_bus.subscribe(RiskRejected, analytics_handler)
+
+    notification_handler = NotificationHandler(build_notifier(settings))
+    event_bus.subscribe(FillReceived, notification_handler)
+    event_bus.subscribe(RiskRejected, notification_handler)
+    event_bus.subscribe(OrderRejected, notification_handler)
+    event_bus.subscribe(ErrorOccurred, notification_handler)
+    event_bus.subscribe(Heartbeat, notification_handler)
 
     system_monitor = SystemMonitor(tracked_metrics)
     summary_logger = PeriodicSummaryLogger(
@@ -152,6 +162,7 @@ def build_container(settings: Settings, config: AppConfig) -> AppContainer:
         data_ingest_service=data_ingest_service,
         analytics_state=analytics_state,
         analytics_handler=analytics_handler,
+        notification_handler=notification_handler,
     )
 
 

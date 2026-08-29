@@ -11,6 +11,7 @@ from trading_platform.backtesting.models.partial_fill_model import PartialFillMo
 from trading_platform.backtesting.models.spread_model import SpreadModel
 from trading_platform.backtesting.order_queue import OrderQueue
 from trading_platform.domain.events.market import BarClosed
+from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.models.bar import Bar
 from trading_platform.execution.paper_broker import PaperBroker
 from trading_platform.infrastructure.event_bus.in_memory import InMemoryEventBus
@@ -73,6 +74,14 @@ class TestPaperTradingLoop:
 
     def test_emits_heartbeat_when_idle(self, make_bar, btc_usdt_instrument_rules) -> None:
         bus = InMemoryEventBus()
+        published: list[object] = []
+        original = bus.publish
+
+        def recording_publish(event: object) -> None:
+            published.append(event)
+            original(event)
+
+        bus.publish = recording_publish  # type: ignore[method-assign]
         stop_after = {"n": 0}
 
         def should_stop() -> bool:
@@ -107,3 +116,4 @@ class TestPaperTradingLoop:
         assert heartbeats
         assert "waiting for next closed candle" in heartbeats[0]
         assert "BTC/USDT@1h" in heartbeats[0]
+        assert any(isinstance(e, Heartbeat) and e.mode == "paper" for e in published)
