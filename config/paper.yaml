@@ -1,7 +1,29 @@
 # Paper-trading overlay — merged over default.yaml when running
-# `trading-platform paper`. Virtual cash, state paths, and feed poll interval
-# are populated here in Milestone 6.
+# `trading-platform paper` (Milestone 6).
 trading:
   exchange: binance
   symbol: BTC/USDT
   timeframe: 1h
+
+paper:
+  starting_cash: "10000"       # quoted Decimal; ignored if state_file already exists
+  poll_interval_sec: 30        # seconds between closed-bar polls
+  state_file: "paper_state.json"  # relative to DATA_DIR (default ./data)
+
+# Reuse backtest fill-simulation knobs so paper fills match backtest realism.
+backtest:
+  spread_bps: 5
+  spread_volatility_k: 0.0
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30
