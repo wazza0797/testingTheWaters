@@ -135,16 +135,17 @@ def market_regime_splits(
     *,
     sma_period: int = 200,
 ) -> tuple[RegimePeriodRow, ...]:
-    """Aggregate metrics by market-regime label on each bar."""
+    """Aggregate metrics by market-regime label on each bar.
+
+    Regime `return_pct` / max drawdown are attributed from consecutive
+    equity *steps* whose ending bar is in that regime (compounded), not
+    first→last on a non-contiguous subsample — which would embed PnL from
+    other regimes between visits.
+    """
     if not bars:
         return ()
     labels = market_regime_labels(bars, sma_period=sma_period)
     ts_to_regime = {bar.timestamp: label for bar, label in zip(bars, labels, strict=True)}
-
-    equity_by: dict[str, list[EquityPoint]] = defaultdict(list)
-    for point in equity_curve:
-        regime = ts_to_regime.get(point.timestamp, MarketRegime.UNKNOWN)
-        equity_by[regime.value].append(point)
 
     trips_by: dict[str, list[RoundTrip]] = defaultdict(list)
     for trip in round_trips:
@@ -159,22 +160,73 @@ def market_regime_splits(
     )
     rows: list[RegimePeriodRow] = []
     for label in order:
-        points = equity_by.get(label, [])
         trips = trips_by.get(label, [])
-        if not points and not trips:
-            continue
+        path = _regime_attributed_equity_path(equity_curve, ts_to_regime, label)
         bars_in_regime = [b for b, reg in zip(bars, labels, strict=True) if reg.value == label]
-        bh = buy_and_hold_return_pct(bars_in_regime) if len(bars_in_regime) >= 2 else None
+        if not path and not trips and len(bars_in_regime) < 2:
+            continue
+        bh = _regime_attributed_bar_return(bars, labels, label)
+        return_pct = _ZERO
+        if len(path) >= 2 and path[0].equity != 0:
+            return_pct = (path[-1].equity - path[0].equity) / path[0].equity * _HUNDRED
         rows.append(
             RegimePeriodRow(
                 label=label,
-                return_pct=_period_return(points),
-                max_drawdown_pct=max_drawdown_pct(points) if points else _ZERO,
+                return_pct=return_pct,
+                max_drawdown_pct=max_drawdown_pct(path) if path else _ZERO,
                 round_trip_count=len(trips),
                 buy_and_hold_return_pct=bh,
             )
         )
     return tuple(rows)
+
+
+def _regime_attributed_equity_path(
+    equity_curve: Sequence[EquityPoint],
+    ts_to_regime: dict[datetime, MarketRegime],
+    target: str,
+) -> tuple[EquityPoint, ...]:
+    """Rebuild a relative equity path using only steps ending in `target`."""
+    if len(equity_curve) < 2:
+        return ()
+    base = Decimal("100")
+    path: list[EquityPoint] = [EquityPoint(equity_curve[0].timestamp, base)]
+    level = base
+    any_step = False
+    for previous, current in zip(equity_curve, equity_curve[1:], strict=False):
+        regime = _regime_at(ts_to_regime, current.timestamp)
+        if regime.value != target:
+            continue
+        if previous.equity == 0:
+            continue
+        level = level * (current.equity / previous.equity)
+        path.append(EquityPoint(current.timestamp, level))
+        any_step = True
+    if not any_step:
+        return ()
+    return tuple(path)
+
+
+def _regime_attributed_bar_return(
+    bars: Sequence[Bar],
+    labels: Sequence[MarketRegime],
+    target: str,
+) -> Decimal | None:
+    """Compound close-to-close returns for steps whose ending bar is in `target`."""
+    if len(bars) < 2:
+        return None
+    compounded = Decimal("1")
+    any_step = False
+    for previous, current, label in zip(bars, bars[1:], labels[1:], strict=False):
+        if label.value != target:
+            continue
+        if previous.close == 0:
+            continue
+        compounded *= current.close / previous.close
+        any_step = True
+    if not any_step:
+        return None
+    return (compounded - Decimal("1")) * _HUNDRED
 
 
 def _period_return(points: Sequence[EquityPoint]) -> Decimal:

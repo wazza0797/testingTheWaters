@@ -98,3 +98,30 @@ class TestMarketRegime:
         labels = market_regime_labels(bars, sma_period=200)
         assert labels[50] == MarketRegime.UNKNOWN
         assert labels[-1] == MarketRegime.BULL
+
+    def test_market_regime_return_attributes_only_in_regime_steps(self) -> None:
+        """Non-contiguous first→last would embed out-of-regime PnL; attribution must not.
+
+        Equity steps: 100→110 (bull +10%), 110→200 (bear, ignored), 200→220 (bull +10%).
+        Attributed bull return = 1.1×1.1−1 = 21%, not naive (220−100)/100 = 120%.
+        """
+        from trading_platform.analytics.regime import _regime_attributed_equity_path
+
+        base = datetime(2024, 6, 1, tzinfo=UTC)
+        ts = [base + timedelta(hours=i) for i in range(4)]
+        equity = (
+            EquityPoint(ts[0], Decimal("100")),
+            EquityPoint(ts[1], Decimal("110")),
+            EquityPoint(ts[2], Decimal("200")),
+            EquityPoint(ts[3], Decimal("220")),
+        )
+        ts_to_regime = {
+            ts[0]: MarketRegime.BULL,
+            ts[1]: MarketRegime.BULL,
+            ts[2]: MarketRegime.BEAR,
+            ts[3]: MarketRegime.BULL,
+        }
+        path = _regime_attributed_equity_path(equity, ts_to_regime, "bull")
+        assert len(path) >= 2
+        return_pct = (path[-1].equity - path[0].equity) / path[0].equity * Decimal("100")
+        assert return_pct == Decimal("21")
