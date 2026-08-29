@@ -4,9 +4,8 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–5 complete (foundation through backtesting with
-> hold-out validation, volatility-aware spreads, and performance analytics;
-> walk-forward deferred to M4.5 Phase C). No paper/live execution or portfolio
+> **Status:** Milestones 0–5 complete, including M4.5 Phases A–C (hold-out,
+> vol-aware spread, walk-forward). No paper/live execution or portfolio
 > persistence exists yet — see [`docs/milestones/`](docs/milestones/) and the
 > project plan for the full roadmap.
 
@@ -107,6 +106,10 @@ uv run trading-platform backtest
 uv run trading-platform backtest --timeframe 4h --start 2024-01-01 --end 2025-01-01
 uv run trading-platform backtest --symbol BTC/USDT --timeframe 1d
 uv run trading-platform backtest --report json   # human summary + JSON PerformanceReport
+
+# 3. Walk-forward grid search (Milestone 4.5 Phase C) — configure
+#    validation.walk_forward in config/backtest.yaml first
+uv run trading-platform walk-forward
 ```
 
 Prints a performance report (round-trips, total return, max drawdown, Sharpe,
@@ -161,6 +164,5 @@ tracked in the project plan and mirrored under
 
 | Milestone | Focus |
 |-----------|-------|
-| M4.5 Phase C — Walk-forward | Grid-search optimizer + rolling OOS folds (uses M5 metrics) |
 | M6 — Paper Trading | Simulated live loop, `PortfolioHandler`; `AnalyticsHandler` already wired |
 | M7+ | Notifications, live trading, Docker |

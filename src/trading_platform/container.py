@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -185,6 +187,7 @@ def build_backtest_engine(
     *,
     symbol: str | None = None,
     timeframe: str | None = None,
+    strategy_params: Mapping[str, Any] | None = None,
 ) -> BacktestRun:
     """Wire up one backtest run's strategy -> risk -> execution chain onto
     `container.event_bus`, reusing the container's existing singletons
@@ -198,6 +201,9 @@ def build_backtest_engine(
     `symbol` / `timeframe` default to `config.trading.*` but may be overridden
     by CLI flags on `trading-platform backtest` without editing YAML.
 
+    `strategy_params` overrides `config.strategy.params` for this run only
+    (used by walk-forward grid search). When omitted, config params apply.
+
     Safe to call more than once on the same container (e.g. hold-out IS then
     OOS) as long as each prior `BacktestRun` has been `teardown()`'d first.
     """
@@ -205,6 +211,7 @@ def build_backtest_engine(
     symbol = symbol or config.trading.symbol
     timeframe = timeframe or config.trading.timeframe
     backtest_config = config.backtest
+    params = dict(strategy_params) if strategy_params is not None else dict(config.strategy.params)
 
     if config.strategy.path is None:
         raise ConfigurationError(
@@ -250,12 +257,12 @@ def build_backtest_engine(
 
     execution_handler = ExecutionHandler(broker, rules_by_symbol, container.event_bus)
 
-    strategy = instantiate_strategy(config.strategy.path, config.strategy.params)
-    strategy_name = describe_strategy(config.strategy.path, symbol, config.strategy.params)
+    strategy = instantiate_strategy(config.strategy.path, params)
+    strategy_name = describe_strategy(config.strategy.path, symbol, params)
     strategy_context = DefaultStrategyContext(
         symbol=symbol,
         timeframe=timeframe,
-        params=config.strategy.params,
+        params=params,
         position_provider=ledger,
     )
     strategy_handler = StrategyHandler(

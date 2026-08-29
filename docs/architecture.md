@@ -418,7 +418,8 @@ run first; never talks to an exchange itself).
 - Hold-out IS/OOS validation is available via `validation.enabled` in
   `config/backtest.yaml` (M4.5 Phase A) — enable it and set `train_end` /
   `test_start` so tuning does not contaminate the held-out window. Full
-  walk-forward optimization is still deferred (M4.5 Phase C, after M5).
+  walk-forward optimization via `trading-platform walk-forward`
+  (`validation.walk_forward` in `config/backtest.yaml`, M4.5 Phase C).
 - Spread defaults to flat `spread_bps`; set `spread_volatility_k > 0` to
   widen fills with Wilder's ATR (M4.5 Phase B). Partial fills remain a
   volume-participation approximation — still more optimistic than a real
@@ -529,7 +530,7 @@ Prometheus server scrapes `/metrics` (Milestone 9).
 | Over-engineering early | Slow delivery | In-memory sync bus only; no external broker until multi-process need |
 | Cash-sufficiency gap (100% sizing overdraws cash) | Ledger cash goes negative | `PassThroughRiskEngine._affordable_quantity` caps order size by cash + fee/spread buffer (M4) |
 | Silent gaps in downloaded/backtested bars | Misleading equity curve | `market_data/gaps.py` scan + CLI warning on `download-data`/`backtest` (M4) |
-| Overfitting / data-snooping (one full-history backtest, hand-tuned params) | Strategy looks good in-sample, fails live | M4.5 hold-out (`validation.enabled`); walk-forward after M5 ([`m4.5-…`](milestones/m4.5-backtest-validation-and-realism.md)) |
+| Overfitting / data-snooping (one full-history backtest, hand-tuned params) | Strategy looks good in-sample, fails live | M4.5 hold-out (`validation.enabled`); walk-forward (`walk-forward` CLI) ([`m4.5-…`](milestones/m4.5-backtest-validation-and-realism.md)) |
 | Point-in-time instrument rules (current snapshot applied to historical bars) | Rules mismatch for older/changed instruments | Documented limitation; acceptable for BTC/USDT today, versioned rules unscheduled future work |
 
 ## Roadmap
@@ -545,10 +546,10 @@ as each milestone lands.
 | M2 — Indicator Engine | Complete | [`m2-indicator-engine.md`](milestones/m2-indicator-engine.md) |
 | M3 — Strategy Engine | Complete | [`m3-strategy-engine.md`](milestones/m3-strategy-engine.md) |
 | M4 — Backtesting Engine | Complete | [`m4-backtesting-engine.md`](milestones/m4-backtesting-engine.md) |
-| M4.5 — Backtest Validation & Realism | Complete (A+B); Phase C planned | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread; walk-forward after M5 |
+| M4.5 — Backtest Validation & Realism | Complete (A+B+C) | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread, walk-forward grid search |
 | M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
 | M6 — Paper Trading | Planned | — |
 | M7+ — Notifications, Live, Docker | Planned | — |
 
 **Recommended build order after M4:** ~~M4.5 Phase A (hold-out) → M4.5 Phase B
-(vol spread)~~ ✅ → ~~M5 (analytics)~~ ✅ → M4.5 Phase C (walk-forward, needs M5 metrics).
+(vol spread)~~ ✅ → ~~M5 (analytics)~~ ✅ → ~~M4.5 Phase C (walk-forward)~~ ✅ → M6.
