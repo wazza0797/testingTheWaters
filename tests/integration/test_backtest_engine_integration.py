@@ -66,24 +66,25 @@ class TestBacktestEngineIntegration:
         # subsequent death cross should have closed it back out.
         assert len(result.fills) >= 1
 
-    def test_build_backtest_engine_honours_symbol_and_timeframe_overrides(
+    def test_build_backtest_engine_merges_strategy_params_onto_config(
         self, btc_usdt_instrument_rules: InstrumentRules
     ) -> None:
+        """Grid overrides must not drop non-grid keys from config.strategy.params."""
         settings = Settings(_env_file=None)
         config = load_config(config_dir=Path("config"), overlay="backtest")
+        # backtest.yaml defaults: fast_period=10, slow_period=30
+        assert config.strategy.params.get("slow_period") == 30
         container = build_container(settings, config)
 
         run = build_backtest_engine(
             container,
             btc_usdt_instrument_rules,
-            symbol="ETH/USDT",
-            timeframe="4h",
+            strategy_params={"fast_period": 5},
         )
         try:
-            assert run.symbol == "ETH/USDT"
-            assert run.timeframe == "4h"
-            assert run.symbol != config.trading.symbol or config.trading.symbol == "ETH/USDT"
-            assert config.trading.timeframe == "1h"  # config unchanged; override is per-run
+            strategy = run.strategy_handler._strategy  # noqa: SLF001
+            assert strategy.fast_period == 5
+            assert strategy.slow_period == 30
         finally:
             run.teardown()
 

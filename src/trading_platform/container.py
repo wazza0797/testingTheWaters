@@ -201,8 +201,9 @@ def build_backtest_engine(
     `symbol` / `timeframe` default to `config.trading.*` but may be overridden
     by CLI flags on `trading-platform backtest` without editing YAML.
 
-    `strategy_params` overrides `config.strategy.params` for this run only
-    (used by walk-forward grid search). When omitted, config params apply.
+    `strategy_params` is merged on top of `config.strategy.params` for this
+    run only (used by walk-forward grid search so non-grid keys from YAML
+    still apply). When omitted, config params apply unchanged.
 
     Safe to call more than once on the same container (e.g. hold-out IS then
     OOS) as long as each prior `BacktestRun` has been `teardown()`'d first.
@@ -211,7 +212,9 @@ def build_backtest_engine(
     symbol = symbol or config.trading.symbol
     timeframe = timeframe or config.trading.timeframe
     backtest_config = config.backtest
-    params = dict(strategy_params) if strategy_params is not None else dict(config.strategy.params)
+    params = dict(config.strategy.params)
+    if strategy_params is not None:
+        params.update(strategy_params)
 
     if config.strategy.path is None:
         raise ConfigurationError(
