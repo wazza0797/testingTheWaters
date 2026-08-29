@@ -201,7 +201,7 @@ class — so `domain/ports/strategy.py` never needs to import `pandas` or
 - `position_for(symbol) -> Position | None`: read-only positions, backed by
   [`IPositionProvider`](../src/trading_platform/domain/ports/portfolio.py).
   Milestone 3 wires the stub `NullPositionProvider` (always flat — no
-  position tracking exists yet); Milestone 5's `PortfolioHandler` supplies
+  position tracking exists yet); Milestone 6's `PortfolioHandler` supplies
   the real implementation later with no strategy-facing change.
 
 [`StrategyHandler`](../src/trading_platform/strategies/handler.py) adapts one
@@ -546,9 +546,9 @@ as each milestone lands.
 | M3 — Strategy Engine | Complete | [`m3-strategy-engine.md`](milestones/m3-strategy-engine.md) |
 | M4 — Backtesting Engine | Complete | [`m4-backtesting-engine.md`](milestones/m4-backtesting-engine.md) |
 | M4.5 — Backtest Validation & Realism | Complete (A+B); Phase C planned | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread; walk-forward after M5 |
-| M5 — Performance Analytics | Planned | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
+| M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
 | M6 — Paper Trading | Planned | — |
 | M7+ — Notifications, Live, Docker | Planned | — |
 
 **Recommended build order after M4:** ~~M4.5 Phase A (hold-out) → M4.5 Phase B
-(vol spread)~~ ✅ → M5 (analytics) → M4.5 Phase C (walk-forward, needs M5 metrics).
+(vol spread)~~ ✅ → ~~M5 (analytics)~~ ✅ → M4.5 Phase C (walk-forward, needs M5 metrics).

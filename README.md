@@ -4,11 +4,11 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–4.5 complete (foundation through backtesting with
-> hold-out validation and volatility-aware spreads; walk-forward deferred to
-> after M5). No paper/live execution or portfolio persistence exists yet —
-> see [`docs/milestones/`](docs/milestones/) and the project plan for the
-> full roadmap.
+> **Status:** Milestones 0–5 complete (foundation through backtesting with
+> hold-out validation, volatility-aware spreads, and performance analytics;
+> walk-forward deferred to M4.5 Phase C). No paper/live execution or portfolio
+> persistence exists yet — see [`docs/milestones/`](docs/milestones/) and the
+> project plan for the full roadmap.
 
 ## Non-Goals (for now)
 
@@ -106,12 +106,15 @@ uv run trading-platform download-data --days 365
 uv run trading-platform backtest
 uv run trading-platform backtest --timeframe 4h --start 2024-01-01 --end 2025-01-01
 uv run trading-platform backtest --symbol BTC/USDT --timeframe 1d
+uv run trading-platform backtest --report json   # human summary + JSON PerformanceReport
 ```
 
-Prints a trade-log/equity-curve summary (fills, ending cash/equity, total
-return, fees paid, final position) at the end of the run. Both commands warn
+Prints a performance report (round-trips, total return, max drawdown, Sharpe,
+win rate, profit factor, significance flags, calendar/market regime tables,
+buy-and-hold benchmark) after each run. With hold-out validation enabled,
+IS and OOS each get their own report. Both `download-data` and `backtest` warn
 (without failing) if the loaded bars have any timestamp gaps, since a silent
-gap in historical data can otherwise bias backtest results — see
+gap in historical data can otherwise bias results — see
 `docs/architecture.md`'s Limitations/Risks sections for this and other
 backtesting biases worth being aware of (overfitting/data-snooping,
 point-in-time instrument rules, static spread assumptions).
@@ -158,6 +161,6 @@ tracked in the project plan and mirrored under
 
 | Milestone | Focus |
 |-----------|-------|
-| [M5 — Performance Analytics](docs/milestones/m5-performance-analytics.md) | Sharpe, drawdown, regime splits, statistical significance flags |
-| M4.5 Phase C — Walk-forward | Grid-search optimizer + rolling OOS folds (after M5) |
-| M6 — Paper Trading | Simulated live loop, `PortfolioHandler`, `AnalyticsHandler` wired |
+| M4.5 Phase C — Walk-forward | Grid-search optimizer + rolling OOS folds (uses M5 metrics) |
+| M6 — Paper Trading | Simulated live loop, `PortfolioHandler`; `AnalyticsHandler` already wired |
+| M7+ | Notifications, live trading, Docker |

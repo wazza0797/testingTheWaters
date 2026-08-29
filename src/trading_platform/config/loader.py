@@ -101,6 +101,21 @@ class ObservabilityConfig(BaseModel):
     log_summary_enabled: bool = True
 
 
+class AnalyticsConfig(BaseModel):
+    """Performance-report thresholds and bootstrap settings (Milestone 5).
+
+    Used by `build_performance_report` / CLI output and by `AnalyticsHandler`
+    significance defaults. Bootstrap is pure-Python (`random`) — no scipy.
+    """
+
+    min_round_trips: int = 30
+    min_bars: int = 500
+    min_daily_returns_for_sharpe: int = 30
+    bootstrap_iterations: int = 1000
+    bootstrap_seed: int = 42
+    market_sma_period: int = 200
+
+
 class AppConfig(BaseModel):
     """Typed, validated view over `config/*.yaml`. Never holds secrets — those
     live in `Settings` (env vars) and are merged in by the composition root.
@@ -111,6 +126,7 @@ class AppConfig(BaseModel):
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
