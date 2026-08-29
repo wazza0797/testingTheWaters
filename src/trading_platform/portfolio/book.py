@@ -34,9 +34,7 @@ class PortfolioBook:
         fills: list[Fill] | None = None,
     ) -> PortfolioBook:
         book = cls(starting_cash=cash)
-        book._portfolio = Portfolio(
-            cash=cash, positions=dict(positions), timestamp=timestamp
-        )
+        book._portfolio = Portfolio(cash=cash, positions=dict(positions), timestamp=timestamp)
         book._fills = list(fills or [])
         return book
 
@@ -87,8 +85,7 @@ class PortfolioBook:
         else:
             new_quantity = position.quantity + fill.filled_qty
             new_average_price = (
-                position.quantity * position.average_entry_price
-                + fill.filled_qty * fill.fill_price
+                position.quantity * position.average_entry_price + fill.filled_qty * fill.fill_price
             ) / new_quantity
             new_position = Position(
                 symbol=fill.symbol,

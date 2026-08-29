@@ -346,8 +346,7 @@ def build_paper_session(
 
     if config.strategy.path is None:
         raise ConfigurationError(
-            "No strategy configured for paper trading — set 'strategy.path' "
-            "in config/paper.yaml."
+            "No strategy configured for paper trading — set 'strategy.path' in config/paper.yaml."
         )
 
     state_path = Path(container.settings.data_dir) / paper_cfg.state_file
