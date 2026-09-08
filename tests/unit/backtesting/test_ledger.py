@@ -133,11 +133,15 @@ class TestSellFills:
         with pytest.raises(PortfolioError, match="exceeds held"):
             ledger.apply_fill(_fill(OrderSide.SELL, Decimal("0.2"), Decimal("60000")))
 
-    def test_selling_with_no_open_position_raises_portfolio_error(self) -> None:
+    def test_selling_with_no_open_position_opens_a_short(self) -> None:
         ledger = BacktestLedger(starting_cash=Decimal("10000"))
 
-        with pytest.raises(PortfolioError, match="no open position"):
-            ledger.apply_fill(_fill(OrderSide.SELL, Decimal("0.1"), Decimal("60000")))
+        ledger.apply_fill(_fill(OrderSide.SELL, Decimal("0.1"), Decimal("60000")))
+
+        position = ledger.position_for("BTC/USDT")
+        assert position is not None
+        assert position.quantity == Decimal("-0.1")
+        assert ledger.cash == Decimal("10000") + Decimal("6000")
 
 
 class TestMultiSymbolIsolation:

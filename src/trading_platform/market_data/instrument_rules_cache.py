@@ -66,6 +66,8 @@ class InstrumentRulesCache:
 
         for field_name in _DECIMAL_FIELDS:
             payload[field_name] = Decimal(payload[field_name])
+        # Entries written before allows_short existed default to long-only.
+        payload.setdefault("allows_short", False)
         return InstrumentRules(**payload)
 
     def save(self, rules: InstrumentRules) -> None:
@@ -83,6 +85,7 @@ class InstrumentRulesCache:
             "qty_precision": rules.qty_precision,
             "maker_fee_rate": str(rules.maker_fee_rate),
             "taker_fee_rate": str(rules.taker_fee_rate),
+            "allows_short": rules.allows_short,
             "cached_at": utc_now().isoformat(),
         }
         tmp_path = path.with_name(path.name + ".tmp")

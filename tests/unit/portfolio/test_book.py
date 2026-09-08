@@ -57,6 +57,22 @@ class TestPortfolioBook:
         with pytest.raises(PortfolioError):
             book.apply_fill(_fill(OrderSide.SELL, "0.2", "50000", day=1))
 
+    def test_sell_while_flat_opens_short(self) -> None:
+        book = PortfolioBook(Decimal("10000"))
+        book.apply_fill(_fill(OrderSide.SELL, "0.1", "50000", fee="5"))
+        position = book.position_for("BTC/USDT")
+        assert position is not None
+        assert position.quantity == Decimal("-0.1")
+        assert book.cash == Decimal("10000") + Decimal("5000") - Decimal("5")
+
+    def test_short_then_cover_updates_cash(self) -> None:
+        book = PortfolioBook(Decimal("10000"))
+        book.apply_fill(_fill(OrderSide.SELL, "0.1", "50000", fee="5"))
+        book.apply_fill(_fill(OrderSide.BUY, "0.1", "49000", fee="5", day=1))
+        assert book.position_for("BTC/USDT") is None
+        # Short profit 100 on 0.1 @ 1000 move, minus 10 fees.
+        assert book.cash == Decimal("10000") + Decimal("100") - Decimal("10")
+
 
 class TestJsonPaperStateStore:
     def test_round_trip(self, tmp_path: Path) -> None:

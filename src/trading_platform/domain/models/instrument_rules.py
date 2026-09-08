@@ -26,6 +26,10 @@ class InstrumentRules:
     qty_precision: int
     maker_fee_rate: Decimal
     taker_fee_rate: Decimal
+    # Spot pairs (e.g. Binance BTC/USDT) stay False. Derivative venues that
+    # can open a short (IG CFDs, later futures) set True so risk may approve
+    # SELL-while-flat. Default False keeps every existing instrument long-only.
+    allows_short: bool = False
 
     def __post_init__(self) -> None:
         if self.tick_size <= 0:

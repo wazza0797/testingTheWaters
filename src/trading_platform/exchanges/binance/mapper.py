@@ -97,6 +97,7 @@ def map_instrument_rules(symbol: str, market: dict[str, Any]) -> InstrumentRules
         qty_precision=_decimal_places(step_size),
         maker_fee_rate=maker_fee_rate,
         taker_fee_rate=taker_fee_rate,
+        allows_short=False,  # spot — no short opens
     )
 
 
