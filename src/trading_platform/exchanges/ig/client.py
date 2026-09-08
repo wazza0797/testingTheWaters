@@ -69,9 +69,7 @@ class IgRestClient:
             self._rate_limiter: IgRateLimiter | None = rate_limiter
         elif http_client is None:
             self._rate_limiter = (
-                IgRateLimiter.for_demo()
-                if base_url == DEMO_BASE_URL
-                else IgRateLimiter.for_live()
+                IgRateLimiter.for_demo() if base_url == DEMO_BASE_URL else IgRateLimiter.for_live()
             )
         else:
             self._rate_limiter = None
@@ -123,8 +121,7 @@ class IgRestClient:
         if response.status_code >= 400:
             if is_ig_allowance_error(response.text):
                 raise ExchangeRateLimitError(
-                    f"IG session login rate-limited ({response.status_code}): "
-                    f"{response.text[:300]}"
+                    f"IG session login rate-limited ({response.status_code}): {response.text[:300]}"
                 )
             raise ExchangeAdapterError(
                 f"IG session login failed ({response.status_code}): {response.text[:300]}"

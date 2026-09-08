@@ -31,9 +31,7 @@ class TestIgRateLimiter:
 
 class TestAllowanceDetection:
     def test_detects_api_key_allowance(self) -> None:
-        assert is_ig_allowance_error(
-            '{"errorCode":"error.public-api.exceeded-api-key-allowance"}'
-        )
+        assert is_ig_allowance_error('{"errorCode":"error.public-api.exceeded-api-key-allowance"}')
 
     def test_ignores_unrelated_errors(self) -> None:
         assert not is_ig_allowance_error('{"errorCode":"validation.null-not-allowed.request"}')
