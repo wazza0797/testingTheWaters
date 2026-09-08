@@ -4,9 +4,11 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–7 complete. Milestone 8a (exchange demo/practice
-> execution) is in progress — see [`docs/milestones/`](docs/milestones/) and the
-> project plan. Local paper trading remains available; mainnet live is later.
+> **Status:** Milestones 0–7 complete, including 3.5 (composable
+> `RuleStrategy` / `RegimeRouterStrategy`). Milestone 8a (exchange
+> demo/practice execution) is in progress — see
+> [`docs/milestones/`](docs/milestones/) and the project plan. Local paper
+> trading remains available; mainnet live is later.
 
 ## Non-Goals (for now)
 
@@ -85,6 +87,27 @@ and must be fully testable with synthetic bars — no imports from `exchanges/`,
 for the full design rationale and
 [`src/trading_platform/strategies/examples/sma_crossover.py`](src/trading_platform/strategies/examples/sma_crossover.py)
 for a worked reference implementation.
+
+**No-code strategies via YAML** are also available for indicator-driven ideas —
+you don't need to write a new Python class for every rule combination:
+
+- [`RuleStrategy`](src/trading_platform/strategies/examples/rule_strategy.py) —
+  entry/exit as composable `all` / `any` / `not` condition trees over any mix
+  of the ~30 indicators in the [registry](src/trading_platform/indicators/registry.py)
+  (trend, momentum, volatility, volume) — no "one indicator per category"
+  restriction, e.g. two volume leaves `any`'d together plus a volatility gate.
+- [`RegimeRouterStrategy`](src/trading_platform/strategies/examples/regime_router.py) —
+  the same condition trees as `when` predicates to detect market regime
+  (e.g. `EMA50 > EMA200 AND ADX > 25 AND vol_percentile > 50` → trend/breakout
+  playbook), then delegates to the matching nested `RuleStrategy`, with
+  hysteresis to avoid flip-flopping regimes bar-to-bar.
+
+Both are asset-class agnostic (price-normalized thresholds like `atr_pct` /
+`bb_width`, volume as optional confirmation only) so the same recipes work on
+crypto today and CFDs/FX later. See
+[`docs/milestones/m3.5-composable-strategies.md`](docs/milestones/m3.5-composable-strategies.md)
+for the full design and [`config/backtest.yaml`](config/backtest.yaml) for
+copy-paste-ready example recipes.
 
 ## Backtesting
 

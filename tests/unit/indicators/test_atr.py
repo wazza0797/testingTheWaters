@@ -53,18 +53,31 @@ class TestAtrRegistry:
         registry = build_default_registry()
         assert "atr" in registry.available()
 
-    def test_compute_requires_high_and_low(self) -> None:
-        registry = build_default_registry()
-        closes = pd.Series([1.0, 2.0, 3.0])
-        with pytest.raises(ValueError, match="high="):
-            registry.compute("atr", closes, period=2)
+    def test_registered_profile_is_ohlc(self) -> None:
+        from trading_platform.indicators.registry import InputProfile
 
-    def test_compute_with_ohlc_kwargs(self) -> None:
+        registry = build_default_registry()
+        assert registry.profile_for("atr") is InputProfile.OHLC
+
+    def test_compute_with_positional_high_low_close(self) -> None:
         registry = build_default_registry()
         high = pd.Series([12.0, 13.0, 14.0, 15.0])
         low = pd.Series([10.0, 11.0, 10.0, 12.0])
         close = pd.Series([11.0, 12.0, 11.0, 14.0])
 
-        result = registry.compute("atr", close, high=high, low=low, period=2)
+        result = registry.compute("atr", high, low, close, period=2)
+
+        assert result.iloc[2] == pytest.approx(3.0)
+
+    def test_compute_from_bars_extracts_ohlc_automatically(self, make_bar) -> None:
+        registry = build_default_registry()
+        bars = [
+            make_bar(open_="11", high="12", low="10", close="11"),
+            make_bar(open_="12", high="13", low="11", close="12"),
+            make_bar(open_="11", high="14", low="10", close="11"),
+            make_bar(open_="14", high="15", low="12", close="14"),
+        ]
+
+        result = registry.compute_from_bars("atr", bars, period=2)
 
         assert result.iloc[2] == pytest.approx(3.0)

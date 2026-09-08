@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from trading_platform.indicators.wilder import wilder_smoothing
+
 
 def compute_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
     """Wilder's smoothed Relative Strength Index.
@@ -12,10 +14,11 @@ def compute_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
     variant).
 
     For each bar-to-bar change: `gain = max(change, 0)`, `loss = max(-change, 0)`.
+    Both gain and loss series are smoothed independently via Wilder's
+    recursive average (`wilder.py` — shared with ATR/ADX): first average (at
+    index `period`) = plain mean of the first `period` gains/losses; every
+    average after = `(prev_avg * (period - 1) + current) / period`.
 
-    - First average gain/loss (at index `period`) = plain mean of the first
-      `period` gains/losses.
-    - Every average after: `avg = (prev_avg * (period - 1) + current) / period`.
     - `RS = avg_gain / avg_loss`; `RSI = 100 - 100 / (1 + RS)`.
     - By definition: `RSI = 100` when `avg_loss == 0` (all gains), `RSI = 0`
       when `avg_gain == 0` (all losses), `RSI = 50` when both are zero (no
@@ -34,17 +37,16 @@ def compute_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
         return result
 
     changes = values[1:] - values[:-1]
-    gains = [c if c > 0 else 0.0 for c in changes]
-    losses = [-c if c < 0 else 0.0 for c in changes]
+    gains = pd.Series([c if c > 0 else 0.0 for c in changes])
+    losses = pd.Series([-c if c < 0 else 0.0 for c in changes])
 
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    result.iloc[period] = _rsi_from_averages(avg_gain, avg_loss)
+    avg_gains = wilder_smoothing(gains, period)
+    avg_losses = wilder_smoothing(losses, period)
 
-    for i in range(period, len(changes)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        result.iloc[i + 1] = _rsi_from_averages(avg_gain, avg_loss)
+    # avg_{gain,loss} seed at gains-index `period - 1`, which is close index
+    # `period` (changes[i] is the step from close[i] to close[i + 1]).
+    for i in range(period - 1, len(changes)):
+        result.iloc[i + 1] = _rsi_from_averages(avg_gains.iloc[i], avg_losses.iloc[i])
 
     return result
 

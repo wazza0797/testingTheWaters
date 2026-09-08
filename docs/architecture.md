@@ -262,6 +262,25 @@ Strategies must have **zero imports** from `exchanges/`, `execution/`, or
 `ccxt`, and must be fully testable with synthetic `Bar` sequences — see the
 reference [`SmaCrossoverStrategy`](../src/trading_platform/strategies/examples/sma_crossover.py).
 
+**Composable, no-code strategies (Milestone 3.5)** build on the same
+`IStrategy` contract rather than replacing it:
+[`RuleStrategy`](../src/trading_platform/strategies/examples/rule_strategy.py)
+evaluates entry/exit as YAML condition trees (`all`/`any`/`not` over
+`compare`/`compare_indicators`/`cross` leaves — no `eval()`, validated at
+construction) against the expanded
+[`IndicatorRegistry`](../src/trading_platform/indicators/registry.py)
+catalog, and
+[`RegimeRouterStrategy`](../src/trading_platform/strategies/examples/regime_router.py)
+reuses that same condition AST as `when` predicates to pick which nested
+`RuleStrategy` playbook is active, with hysteresis against flip-flopping.
+Both are ordinary `IStrategy` implementations — `StrategyHandler`,
+`StrategyLoader`, and the conformance suite treat them exactly like
+`SmaCrossoverStrategy`. See
+[`m3.5-composable-strategies.md`](milestones/m3.5-composable-strategies.md)
+for the full design, including the input-profile system that lets the
+registry stay asset-class agnostic (price-normalized thresholds, volume as
+optional confirmation only).
+
 ### 4. Internal Event Bus (In-Process Pub/Sub)
 
 The event bus is the **primary integration mechanism** between modules,
@@ -547,6 +566,7 @@ as each milestone lands.
 | M1 — Historical Data | Complete | [`m1-historical-data.md`](milestones/m1-historical-data.md) |
 | M2 — Indicator Engine | Complete | [`m2-indicator-engine.md`](milestones/m2-indicator-engine.md) |
 | M3 — Strategy Engine | Complete | [`m3-strategy-engine.md`](milestones/m3-strategy-engine.md) |
+| M3.5 — Composable Strategies | Complete | [`m3.5-composable-strategies.md`](milestones/m3.5-composable-strategies.md) — YAML `RuleStrategy` (AND/OR/NOT), `RegimeRouterStrategy` playbook selection, expanded asset-class-agnostic indicator catalog |
 | M4 — Backtesting Engine | Complete | [`m4-backtesting-engine.md`](milestones/m4-backtesting-engine.md) |
 | M4.5 — Backtest Validation & Realism | Complete (A+B+C) | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread, walk-forward grid search |
 | M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
