@@ -229,9 +229,8 @@ def map_confirm_to_order_status(
 ) -> ExchangeOrderStatus:
     """Map GET /confirms/{dealReference} into `ExchangeOrderStatus`."""
     status = str(confirm.get("dealStatus") or "").upper()
+    # `size` is deal size; `level` is fill price — never use level as a size fallback.
     size_raw = confirm.get("size")
-    if size_raw is None:
-        size_raw = confirm.get("level")
     size = _to_decimal(size_raw if size_raw is not None else 0, field="size")
     filled = size
     level = confirm.get("level")

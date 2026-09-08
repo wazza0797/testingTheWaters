@@ -26,8 +26,9 @@ in risk/portfolio (`InstrumentRules.allows_short`)
 1. Create an IG **demo** account + API key (IG Labs).
 2. Set in `.env`: `ENV=demo`, `IG_DEMO_API_KEY`, `IG_DEMO_USERNAME`,
    `IG_DEMO_PASSWORD`, optional `IG_DEMO_ACCOUNT_ID`.
-3. In `config/demo.yaml`, set `trading.exchange: ig` and `trading.symbol` to an
-   **epic** (e.g. `CS.D.EURUSD.MINI.IP`), not `BASE/QUOTE`.
+3. In `config/demo.yaml`, switch the `trading:` block to IG (comment out Binance,
+   uncomment the IG example) and set `symbol` to an **epic** (e.g.
+   `CS.D.EURUSD.MINI.IP`), not `BASE/QUOTE`.
 4. Pipeclean first (venue-agnostic smoke — works for Binance demo too):
 
 ```bash

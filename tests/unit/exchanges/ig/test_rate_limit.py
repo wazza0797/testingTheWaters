@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from trading_platform.domain.errors import ExchangeRateLimitError
+from trading_platform.domain.errors import ExchangeAdapterError, ExchangeRateLimitError
 from trading_platform.exchanges.ig.client import DEMO_BASE_URL, IgRestClient
 from trading_platform.exchanges.ig.rate_limit import (
     DEMO_MIN_INTERVAL_SEC,
@@ -68,6 +68,41 @@ class TestIgClientRateLimitErrors:
         with pytest.raises(ExchangeRateLimitError, match="rate-limited"):
             client.request("GET", "/accounts", version="1")
         assert logins["n"] == 1  # login once; no allowance-triggered re-login
+
+    def test_mutating_401_does_not_replay_request(self) -> None:
+        posts = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path.replace("/gateway/deal", "")
+            if request.method.upper() == "POST" and path.endswith("/session"):
+                return httpx.Response(
+                    200,
+                    headers={"CST": "cst", "X-SECURITY-TOKEN": "sec"},
+                    json={"currencyIsoCode": "GBP", "accounts": []},
+                )
+            if path == "/positions/otc":
+                posts["n"] += 1
+                return httpx.Response(401, json={"errorCode": "error.session.invalid"})
+            return httpx.Response(404, json={"errorCode": f"unhandled {path}"})
+
+        client = IgRestClient(
+            base_url=DEMO_BASE_URL,
+            api_key="k",
+            username="u",
+            password="p",
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url=DEMO_BASE_URL,
+            ),
+        )
+        with pytest.raises(ExchangeAdapterError, match="will not be retried"):
+            client.request(
+                "POST",
+                "/positions/otc",
+                version="2",
+                json_body={"epic": "X", "direction": "BUY", "size": 1},
+            )
+        assert posts["n"] == 1
 
     def test_production_client_enables_demo_limiter(self) -> None:
         # No injected http_client → real pacing for demo host.

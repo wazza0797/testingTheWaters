@@ -143,8 +143,9 @@ class IgAdapter:
             raise ExchangeAdapterError(f"IG /markets/{symbol} returned a non-object payload")
         return map_instrument_rules(symbol, payload)
 
-    @_ig_retry
     def place_order(self, order: Order) -> str:
+        # Intentionally not retried: open/close are not idempotent without a
+        # client deal key — automatic retries can duplicate venue positions.
         if order.order_type != OrderType.MARKET:
             raise ExchangeAdapterError("IG adapter v1 only supports market orders")
 
@@ -176,7 +177,9 @@ class IgAdapter:
                 "direction": direction,
             },
         )
-        payload = self._client.request("POST", "/positions/otc", version="2", json_body=body)
+        payload = self._client.request(
+            "POST", "/positions/otc", version="2", json_body=body, retry_on_auth=False
+        )
         return self._register_deal_reference(payload, order.side)
 
     def _close_position(self, order: Order, position: dict[str, Any]) -> str:
@@ -202,7 +205,9 @@ class IgAdapter:
                 "size": size,
             },
         )
-        payload = self._client.request("DELETE", "/positions/otc", version="1", json_body=body)
+        payload = self._client.request(
+            "DELETE", "/positions/otc", version="1", json_body=body, retry_on_auth=False
+        )
         return self._register_deal_reference(payload, order.side)
 
     def _register_deal_reference(self, payload: Any, side: OrderSide) -> str:

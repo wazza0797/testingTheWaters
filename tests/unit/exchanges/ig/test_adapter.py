@@ -116,6 +116,17 @@ class TestIgMapper:
         )
         assert status.state is ExchangeOrderState.REJECTED
         assert status.venue_message == "MARKET_CLOSED"
+        assert status.quantity == Decimal("0")
+
+    def test_map_confirm_does_not_use_level_as_size(self) -> None:
+        status = map_confirm_to_order_status(
+            deal_reference="ref-1",
+            symbol="CS.D.EURUSD.MINI.IP",
+            side=OrderSide.BUY,
+            confirm={"dealStatus": "ACCEPTED", "level": 1.2345, "dealId": "d1"},
+        )
+        assert status.filled_quantity == Decimal("0")
+        assert status.average_fill_price == Decimal("1.2345")
 
     def test_pick_dealing_currency_prefers_instrument_not_account_when_missing(self) -> None:
         market = {

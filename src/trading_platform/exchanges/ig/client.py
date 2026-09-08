@@ -218,8 +218,13 @@ class IgRestClient:
             )
 
         if response.status_code in {401, 403} and retry_on_auth:
-            # 403 is also used for allowance errors (handled above) and for
-            # expired sessions — only re-login for the latter.
+            # Never auto-replay mutating calls after re-login — IG dealing is
+            # not idempotent and a second POST/DELETE can duplicate positions.
+            if logical_method not in {"GET", "HEAD"}:
+                raise ExchangeAdapterError(
+                    f"IG {logical_method} {path} failed ({response.status_code}) "
+                    f"and will not be retried (mutating request): {response.text[:400]}"
+                )
             logger.info("ig_session_expired_relogin", extra={"path": path})
             self._cst = None
             self._security_token = None
