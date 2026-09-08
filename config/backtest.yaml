@@ -98,7 +98,7 @@ strategy:
 #                 right: { indicator: ema, period: 200 }
 #                 op: ">"
 #             - { compare: { indicator: adx, period: 14, op: ">", value: 25 } }
-#             - { compare: { indicator: vol_percentile, period: 14, lookback: 100, op: ">", value: 50 } }
+#             - { compare: { indicator: vol_percentile, vol_period: 14, lookback: 100, op: ">", value: 50 } }
 #         playbook:
 #           entry:
 #             all:
@@ -113,7 +113,7 @@ strategy:
 #         when:
 #           all:
 #             - { compare: { indicator: adx, period: 14, op: "<", value: 20 } }
-#             - { compare: { indicator: vol_percentile, period: 14, lookback: 100, op: "<", value: 40 } }
+#             - { compare: { indicator: vol_percentile, vol_period: 14, lookback: 100, op: "<", value: 40 } }
 #         playbook:
 #           entry:
 #             all:
