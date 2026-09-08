@@ -38,3 +38,5 @@ class ExchangeOrderStatus:
     fee: Decimal
     fee_currency: str | None
     timestamp: datetime
+    # Venue-native reject/info text when available (e.g. IG confirm `reason`).
+    venue_message: str | None = None

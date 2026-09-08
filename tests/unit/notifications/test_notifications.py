@@ -196,6 +196,8 @@ class TestBuildNotifier:
             TELEGRAM_BOT_TOKEN=None,
             TELEGRAM_CHAT_ID=None,
             DISCORD_WEBHOOK_URL=None,
+            DISCORD_DEMO_WEBHOOK_URL=None,
+            DISCORD_LIVE_WEBHOOK_URL=None,
         )
         notifier = build_notifier(settings)
         assert isinstance(notifier, CompositeNotifier)
@@ -217,18 +219,55 @@ class TestBuildNotifier:
     def test_includes_discord_when_configured(self) -> None:
         settings = Settings(
             _env_file=None,
+            ENV="paper",
             TELEGRAM_BOT_TOKEN=None,
             TELEGRAM_CHAT_ID=None,
-            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/abc",
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/paper",
         )
         notifier = build_notifier(settings)
         assert isinstance(notifier, CompositeNotifier)
         assert len(notifier.notifiers) == 2
         assert isinstance(notifier.notifiers[1], DiscordNotifier)
+        assert notifier.notifiers[1]._webhook_url.endswith("/paper")
+
+    def test_demo_uses_demo_webhook_not_paper(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            ENV="demo",
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/paper",
+            DISCORD_DEMO_WEBHOOK_URL="https://discord.com/api/webhooks/1/demo",
+            DISCORD_LIVE_WEBHOOK_URL="https://discord.com/api/webhooks/1/live",
+        )
+        notifier = build_notifier(settings)
+        discord = next(n for n in notifier.notifiers if isinstance(n, DiscordNotifier))
+        assert discord._webhook_url.endswith("/demo")
+
+    def test_live_uses_live_webhook_not_demo(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            ENV="live",
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/paper",
+            DISCORD_DEMO_WEBHOOK_URL="https://discord.com/api/webhooks/1/demo",
+            DISCORD_LIVE_WEBHOOK_URL="https://discord.com/api/webhooks/1/live",
+        )
+        notifier = build_notifier(settings)
+        discord = next(n for n in notifier.notifiers if isinstance(n, DiscordNotifier))
+        assert discord._webhook_url.endswith("/live")
+
+    def test_demo_does_not_fall_back_to_paper_webhook(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            ENV="demo",
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/paper",
+            DISCORD_DEMO_WEBHOOK_URL=None,
+        )
+        notifier = build_notifier(settings)
+        assert all(not isinstance(n, DiscordNotifier) for n in notifier.notifiers)
 
     def test_includes_both_remotes_when_configured(self) -> None:
         settings = Settings(
             _env_file=None,
+            ENV="paper",
             TELEGRAM_BOT_TOKEN="tok",
             TELEGRAM_CHAT_ID="42",
             DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/abc",

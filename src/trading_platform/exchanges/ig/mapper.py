@@ -129,6 +129,97 @@ def map_instrument_rules(symbol: str, payload: dict[str, Any]) -> InstrumentRule
     )
 
 
+def pick_dealing_currency(
+    market_payload: dict[str, Any], account_currency: str | None = None
+) -> str:
+    """currencyCode must be an *instrument* dealing currency, not account cash currency.
+
+    Using account GBP on a USD-dealt EURUSD epic yields IG rejects like UNKNOWN /
+    "failed to retrieve price information for the currency".
+    """
+    instrument = market_payload.get("instrument") or {}
+    codes: list[str] = []
+    for entry in instrument.get("currencies") or []:
+        if isinstance(entry, dict) and entry.get("code"):
+            codes.append(str(entry["code"]))
+    if not codes:
+        raise ExchangeAdapterError(
+            f"IG market {instrument.get('epic')!r} has no instrument.currencies; "
+            "cannot choose currencyCode for /positions/otc"
+        )
+    if account_currency and account_currency in codes:
+        return account_currency
+    if "USD" in codes:
+        return "USD"
+    return codes[0]
+
+
+def pick_expiry(market_payload: dict[str, Any]) -> str:
+    """CFDs use '-'; daily spread bets usually 'DFB'; forwards use a date code."""
+    instrument = market_payload.get("instrument") or {}
+    expiry = instrument.get("expiry")
+    if expiry is not None and str(expiry).strip() != "":
+        return str(expiry)
+    itype = str(instrument.get("type") or instrument.get("instrumentType") or "").upper()
+    if "SPREADBET" in itype or itype in {"BINARY", "OPT_COMMODITY", "OPT_FX", "OPT_INDEX"}:
+        return "DFB"
+    return "-"
+
+
+def build_open_position_body(
+    *,
+    epic: str,
+    direction: str,
+    size: float,
+    market_payload: dict[str, Any],
+    account_currency: str | None,
+) -> dict[str, Any]:
+    """Build POST /positions/otc v2 body with IG's expected fields.
+
+    Omits null optional keys — IG rejects `validation.null-not-allowed` when
+    nulls are sent for fields that must be absent instead.
+    """
+    body: dict[str, Any] = {
+        "epic": epic,
+        "expiry": pick_expiry(market_payload),
+        "direction": direction,
+        "size": size,
+        "orderType": "MARKET",
+        "timeInForce": "FILL_OR_KILL",
+        "currencyCode": pick_dealing_currency(market_payload, account_currency),
+        "forceOpen": True,
+        "guaranteedStop": False,
+        "trailingStop": False,
+    }
+    return body
+
+
+def build_close_position_body(
+    *,
+    deal_id: str,
+    direction: str,
+    size: float,
+) -> dict[str, Any]:
+    """Build close body for DELETE /positions/otc Version 1 (CloseOTCPositionV1).
+
+    Identify the position by **dealId only**. Sending dealId together with
+    epic/expiry yields `validation.mutual-exclusive-value.request`.
+
+    Market close fields: dealId, direction (opposite of open), size, orderType.
+    Omit level/quoteId for MARKET. timeInForce defaults to FILL_OR_KILL on IG.
+
+    Transport must send this as POST + `_method: DELETE` — a real DELETE drops
+    the body on IG's gateway (FAQ).
+    """
+    return {
+        "dealId": deal_id,
+        "direction": direction,
+        "size": size,
+        "orderType": "MARKET",
+        "timeInForce": "FILL_OR_KILL",
+    }
+
+
 def map_confirm_to_order_status(
     *,
     deal_reference: str,
@@ -138,11 +229,28 @@ def map_confirm_to_order_status(
 ) -> ExchangeOrderStatus:
     """Map GET /confirms/{dealReference} into `ExchangeOrderStatus`."""
     status = str(confirm.get("dealStatus") or "").upper()
-    size = _to_decimal(confirm.get("size") or confirm.get("level") or 0, field="size")
-    # Prefer explicit size; some confirms use `size` for filled amount.
+    size_raw = confirm.get("size")
+    if size_raw is None:
+        size_raw = confirm.get("level")
+    size = _to_decimal(size_raw if size_raw is not None else 0, field="size")
     filled = size
     level = confirm.get("level")
     avg = _to_decimal(level, field="level") if level is not None else None
+    venue_message: str | None = None
+    parts: list[str] = []
+    reason = confirm.get("reason")
+    if reason is not None and str(reason).strip():
+        parts.append(str(reason))
+    error_code = confirm.get("errorCode")
+    if error_code is not None and str(error_code) not in parts:
+        parts.append(f"errorCode={error_code}")
+    # Human-facing detail IG sometimes puts alongside UNKNOWN.
+    for key in ("rejectReason", "message", "errorMessage"):
+        extra = confirm.get(key)
+        if extra is not None and str(extra) not in parts:
+            parts.append(str(extra))
+    if parts:
+        venue_message = "; ".join(parts)
 
     if status in {"ACCEPTED", "OPEN", "FULLY_CLOSED"}:
         state = ExchangeOrderState.FILLED
@@ -181,4 +289,5 @@ def map_confirm_to_order_status(
         fee=Decimal("0"),
         fee_currency=None,
         timestamp=timestamp,
+        venue_message=venue_message,
     )

@@ -15,8 +15,10 @@ _MAX_CONTENT_LEN = 2000
 class DiscordNotifier:
     """Sends messages via a Discord incoming webhook URL.
 
-    Construct only when `DISCORD_WEBHOOK_URL` is configured. HTTP is injected
-    for tests (`http_post`); production uses `httpx.post`.
+    Construct only when the mode-specific Discord webhook env var is set
+    (`DISCORD_WEBHOOK_URL` / `DISCORD_DEMO_WEBHOOK_URL` /
+    `DISCORD_LIVE_WEBHOOK_URL`). HTTP is injected for tests (`http_post`);
+    production uses `httpx.post`.
     """
 
     def __init__(

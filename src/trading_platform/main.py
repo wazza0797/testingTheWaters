@@ -14,6 +14,7 @@ import yaml
 
 from trading_platform import __version__
 from trading_platform.analytics.report import PerformanceReport, build_performance_report
+from trading_platform.application.demo_smoke import format_smoke_balance_hint, run_demo_smoke
 from trading_platform.backtesting.optimization import score_result
 from trading_platform.backtesting.result import BacktestResult
 from trading_platform.backtesting.validation import HoldOutValidator
@@ -31,6 +32,8 @@ from trading_platform.domain.errors import TradingPlatformError
 from trading_platform.domain.events.system import Heartbeat
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.instrument_rules import InstrumentRules
+from trading_platform.domain.models.order import OrderSide
+from trading_platform.exchanges.factory import build_exchange_adapter
 from trading_platform.market_data.gaps import find_gaps
 from trading_platform.market_data.timeframe import timeframe_to_timedelta
 from trading_platform.utils.logging import configure_logging
@@ -757,6 +760,91 @@ def demo(
         )
     except TradingPlatformError as exc:
         typer.echo(f"Demo trading failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("demo-smoke")
+def demo_smoke(
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Venue symbol (Binance BASE/QUOTE or IG epic). Default: config trading.symbol",
+    ),
+    side: str = typer.Option(
+        "buy",
+        "--side",
+        help="Open side: buy (long) or sell (short — derivatives only).",
+    ),
+    no_close: bool = typer.Option(
+        False,
+        "--no-close",
+        help="Leave the position open after the entry fills (default closes it).",
+    ),
+    poll_interval_sec: float = typer.Option(
+        1.0, "--poll-interval-sec", help="Seconds between fetch_order polls."
+    ),
+) -> None:
+    """Pipeclean the configured demo venue: min-size open, poll, then close.
+
+    Requires ENV=demo. Uses trading.exchange from config/demo.yaml (Binance,
+    IG, …). Places a market order at instrument min_qty, waits for a fill,
+    then closes unless --no-close. Refuses to run if a position already exists
+    on the symbol.
+    """
+    settings = Settings()
+    configure_logging(level=settings.log_level, fmt=settings.log_format)
+    if settings.environment != Environment.DEMO:
+        typer.echo(
+            "demo-smoke requires ENV=demo in .env (demo venue keys only — never live).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config(overlay="demo")
+    resolved_symbol = symbol or config.trading.symbol
+    exchange_name = config.trading.exchange
+
+    side_key = side.strip().lower()
+    if side_key not in {"buy", "sell"}:
+        typer.echo("--side must be 'buy' or 'sell'.", err=True)
+        raise typer.Exit(code=1)
+    order_side = OrderSide.BUY if side_key == "buy" else OrderSide.SELL
+
+    try:
+        adapter = build_exchange_adapter(exchange_name, Environment.DEMO, settings)
+        typer.echo(
+            f"Demo smoke on {adapter.exchange_name}: {resolved_symbol} "
+            f"({format_smoke_balance_hint(adapter, resolved_symbol)})"
+        )
+        market_status = getattr(adapter, "market_status", None)
+        if callable(market_status):
+            status = market_status(resolved_symbol)
+            if status:
+                typer.echo(f"Market status: {status}")
+        result = run_demo_smoke(
+            adapter,
+            resolved_symbol,
+            side=order_side,
+            close=not no_close,
+            poll_interval_sec=poll_interval_sec,
+        )
+        typer.echo(
+            f"Open OK: deal={result.open_deal_id} "
+            f"state={result.open_status.state.value} "
+            f"qty={result.quantity} "
+            f"avg={result.open_status.average_fill_price}"
+        )
+        if result.close_status is not None and result.close_deal_id is not None:
+            typer.echo(
+                f"Close OK: deal={result.close_deal_id} "
+                f"state={result.close_status.state.value} "
+                f"avg={result.close_status.average_fill_price}"
+            )
+        else:
+            typer.echo("Left position open (--no-close).")
+        typer.echo("Demo smoke passed.")
+    except TradingPlatformError as exc:
+        typer.echo(f"Demo smoke failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
 

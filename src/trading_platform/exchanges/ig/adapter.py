@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 import httpx
 
-from trading_platform.domain.errors import ExchangeAdapterError
+from trading_platform.domain.errors import ExchangeAdapterError, ExchangeRateLimitError
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.exchange_order import ExchangeOrderStatus
 from trading_platform.domain.models.instrument_rules import InstrumentRules
@@ -20,6 +21,8 @@ from trading_platform.exchanges.ig.client import (
 )
 from trading_platform.exchanges.ig.mapper import (
     EXCHANGE_NAME,
+    build_close_position_body,
+    build_open_position_body,
     map_confirm_to_order_status,
     map_instrument_rules,
     map_price_points,
@@ -30,6 +33,19 @@ from trading_platform.utils.retry import retry_with_backoff
 logger = logging.getLogger(__name__)
 
 _MAX_PRICE_POINTS = 500
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _ig_retry(func: Callable[_P, _T]) -> Callable[_P, _T]:
+    """Retry transient IG errors; never hammer allowance / rate-limit failures."""
+    return retry_with_backoff(
+        max_attempts=3,
+        base_delay_seconds=1.0,
+        exceptions=(ExchangeAdapterError,),
+        exclude=(ExchangeRateLimitError,),
+    )(func)
 
 
 class IgAdapter:
@@ -102,7 +118,7 @@ class IgAdapter:
     def exchange_name(self) -> str:
         return EXCHANGE_NAME
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def fetch_ohlcv(
         self,
         symbol: str,
@@ -120,14 +136,14 @@ class IgAdapter:
             raise ExchangeAdapterError("IG /prices returned a non-object payload")
         return map_price_points(symbol, timeframe, payload)
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def fetch_instrument_rules(self, symbol: str) -> InstrumentRules:
         payload = self._client.request("GET", f"/markets/{symbol}", version="3")
         if not isinstance(payload, dict):
             raise ExchangeAdapterError(f"IG /markets/{symbol} returned a non-object payload")
         return map_instrument_rules(symbol, payload)
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def place_order(self, order: Order) -> str:
         if order.order_type != OrderType.MARKET:
             raise ExchangeAdapterError("IG adapter v1 only supports market orders")
@@ -139,18 +155,27 @@ class IgAdapter:
         return self._open_position(order)
 
     def _open_position(self, order: Order) -> str:
-        currency = self._client.account_currency or "GBP"
+        market = self._client.request("GET", f"/markets/{order.symbol}", version="3")
+        if not isinstance(market, dict):
+            raise ExchangeAdapterError(f"IG /markets/{order.symbol} returned a non-object payload")
         direction = "BUY" if order.side == OrderSide.BUY else "SELL"
-        body = {
-            "epic": order.symbol,
-            "expiry": "-",
-            "direction": direction,
-            "size": float(order.quantity),
-            "orderType": "MARKET",
-            "currencyCode": currency,
-            "forceOpen": True,
-            "guaranteedStop": False,
-        }
+        body = build_open_position_body(
+            epic=order.symbol,
+            direction=direction,
+            size=float(order.quantity),
+            market_payload=market,
+            account_currency=self._client.account_currency,
+        )
+        logger.info(
+            "ig_open_position",
+            extra={
+                "epic": order.symbol,
+                "currencyCode": body.get("currencyCode"),
+                "expiry": body.get("expiry"),
+                "size": body.get("size"),
+                "direction": direction,
+            },
+        )
         payload = self._client.request("POST", "/positions/otc", version="2", json_body=body)
         return self._register_deal_reference(payload, order.side)
 
@@ -161,13 +186,22 @@ class IgAdapter:
         # Close with the opposite direction of the open position.
         pos_dir = str(position.get("direction") or "").upper()
         close_dir = "SELL" if pos_dir == "BUY" else "BUY"
-        size = position.get("size") or float(order.quantity)
-        body = {
-            "dealId": deal_id,
-            "direction": close_dir,
-            "size": float(size),
-            "orderType": "MARKET",
-        }
+        size_raw = position.get("size")
+        size = float(size_raw) if size_raw is not None else float(order.quantity)
+        body = build_close_position_body(
+            deal_id=str(deal_id),
+            direction=close_dir,
+            size=size,
+        )
+        logger.info(
+            "ig_close_position",
+            extra={
+                "dealId": deal_id,
+                "epic": position.get("epic") or order.symbol,
+                "direction": close_dir,
+                "size": size,
+            },
+        )
         payload = self._client.request("DELETE", "/positions/otc", version="1", json_body=body)
         return self._register_deal_reference(payload, order.side)
 
@@ -191,21 +225,22 @@ class IgAdapter:
             market = entry.get("market") or {}
             position = entry.get("position") or entry
             if market.get("epic") == epic or position.get("epic") == epic:
-                # Flatten dealId/direction/size onto one dict for callers.
                 flat = dict(position)
-                if "dealId" not in flat and entry.get("position"):
+                if "dealId" not in flat and isinstance(entry.get("position"), dict):
                     flat.update(entry["position"])
+                # Keep epic for logging / balance lookups; close uses dealId only.
+                flat.setdefault("epic", market.get("epic") or epic)
                 return flat
         return None
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def cancel_order(self, order_id: str, symbol: str) -> None:
         raise ExchangeAdapterError(
             "IG adapter v1 does not cancel working orders (market deals only); "
             f"cannot cancel {order_id} for {symbol}"
         )
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def get_balance(self, asset: str) -> Decimal:
         self._client.ensure_session()
         payload = self._client.request("GET", "/accounts", version="1")
@@ -241,7 +276,7 @@ class IgAdapter:
                 return account
         return None
 
-    @retry_with_backoff(max_attempts=3, base_delay_seconds=1.0, exceptions=(ExchangeAdapterError,))
+    @_ig_retry
     def fetch_order(self, order_id: str, symbol: str) -> ExchangeOrderStatus:
         payload = self._client.request("GET", f"/confirms/{order_id}", version="1")
         if not isinstance(payload, dict):
@@ -266,4 +301,17 @@ class IgAdapter:
             fee=status.fee,
             fee_currency=status.fee_currency,
             timestamp=status.timestamp,
+            venue_message=status.venue_message,
         )
+
+    def market_status(self, symbol: str) -> str | None:
+        """Best-effort IG snapshot marketStatus (TRADEABLE / CLOSED / …)."""
+        try:
+            payload = self._client.request("GET", f"/markets/{symbol}", version="3")
+        except ExchangeAdapterError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        snapshot = payload.get("snapshot") or {}
+        status = snapshot.get("marketStatus")
+        return str(status) if status is not None else None

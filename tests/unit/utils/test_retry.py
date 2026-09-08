@@ -49,3 +49,23 @@ class TestRetryWithBackoff:
 
         with pytest.raises(TypeError):
             raises_type_error()
+
+    def test_excluded_exceptions_are_not_retried(self) -> None:
+        calls = {"count": 0}
+
+        class RateLimitedError(ValueError):
+            pass
+
+        @retry_with_backoff(
+            max_attempts=5,
+            base_delay_seconds=0.0,
+            exceptions=(ValueError,),
+            exclude=(RateLimitedError,),
+        )
+        def hits_limit() -> None:
+            calls["count"] += 1
+            raise RateLimitedError("slow down")
+
+        with pytest.raises(RateLimitedError):
+            hits_limit()
+        assert calls["count"] == 1

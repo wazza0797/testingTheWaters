@@ -9,10 +9,10 @@ trading:
 # --- IG Markets demo (CFDs) -------------------------------------------------
 # Uncomment and set ENV=demo + IG_DEMO_* in .env. `symbol` is the IG epic
 # (not BASE/QUOTE). Find epics via IG web / market search.
-# trading:
-#   exchange: ig
-#   symbol: CS.D.EURUSD.MINI.IP
-#   timeframe: 1h
+trading:
+  exchange: ig
+  symbol: CS.D.GBPEUR.CFD.IP
+  timeframe: 1h
 
 demo:
   poll_interval_sec: 30          # closed-bar poll (same idea as paper)

@@ -55,7 +55,14 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = Field(default=None, validation_alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
+    # Discord: one webhook per run mode — never cross-post demo↔live↔paper.
     discord_webhook_url: str | None = Field(default=None, validation_alias="DISCORD_WEBHOOK_URL")
+    discord_demo_webhook_url: str | None = Field(
+        default=None, validation_alias="DISCORD_DEMO_WEBHOOK_URL"
+    )
+    discord_live_webhook_url: str | None = Field(
+        default=None, validation_alias="DISCORD_LIVE_WEBHOOK_URL"
+    )
 
     live_trading_enabled: bool = Field(default=False, validation_alias="LIVE_TRADING_ENABLED")
 

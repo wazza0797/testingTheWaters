@@ -17,11 +17,15 @@ def retry_with_backoff(
     max_attempts: int = 3,
     base_delay_seconds: float = 0.5,
     exceptions: tuple[type[Exception], ...] = (Exception,),
+    exclude: tuple[type[Exception], ...] = (),
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Retry a callable with exponential backoff.
 
-    Intended for exchange adapter calls (network flakiness, rate limits) —
-    never for domain logic, which must stay deterministic and side-effect free.
+    Intended for exchange adapter calls (network flakiness) — never for domain
+    logic, which must stay deterministic and side-effect free.
+
+    `exclude`: exception types that match `exceptions` but must not be retried
+    (e.g. venue rate-limit / allowance errors — retrying those burns quota).
     """
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
@@ -32,6 +36,8 @@ def retry_with_backoff(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as exc:
+                    if exclude and isinstance(exc, exclude):
+                        raise
                     last_exc = exc
                     if attempt == max_attempts:
                         break

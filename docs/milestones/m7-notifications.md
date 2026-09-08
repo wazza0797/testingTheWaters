@@ -13,9 +13,11 @@ event subscriptions so execution/risk never import notifiers.
 
 ## Design decisions
 
-1. **Channels:** `ConsoleNotifier` always; optional `DiscordNotifier`
-   (`DISCORD_WEBHOOK_URL`) and/or `TelegramNotifier` (both
-   `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`). Missing remotes → console only.
+1. **Channels:** `ConsoleNotifier` always; optional `DiscordNotifier` and/or
+   `TelegramNotifier`. Discord uses **one webhook per `ENV`** (no fallback):
+   `DISCORD_WEBHOOK_URL` (paper/local/backtest), `DISCORD_DEMO_WEBHOOK_URL`
+   (demo), `DISCORD_LIVE_WEBHOOK_URL` (live). Telegram needs both
+   `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`. Missing remotes → console only.
 2. **Fan-out:** `CompositeNotifier` inside `NotificationHandler`
 3. **Isolation:** handler catches its own exceptions; composite isolates
    per-channel failures so one remote never blocks console (or vice versa).

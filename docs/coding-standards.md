@@ -94,7 +94,9 @@ future extension — avoid speculative abstraction.
   per test file.
 - Strategy/indicator/backtest tests must run with **zero network access**.
   Tests that require a live exchange are marked `@pytest.mark.network` and
-  excluded from the default `pytest` run (see `pyproject.toml`).
+  excluded from CI via `pytest -m "not network"`.
+  IG demo dealing tests additionally require `IG_DEMO_INTEGRATION=1` so
+  `pytest -m network` never places demo orders by accident.
 - New modules ship with tests in the same PR — untested code does not merge.
 
 ## Dependencies
