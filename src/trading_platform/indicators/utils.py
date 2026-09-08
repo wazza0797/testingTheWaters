@@ -37,3 +37,22 @@ def ohlc_from_bars(bars: Sequence[Bar]) -> tuple[pd.Series, pd.Series, pd.Series
         [float(bar.close) for bar in bars], index=index, dtype="float64", name="close"
     )
     return high, low, close
+
+
+def volumes_from_bars(bars: Sequence[Bar]) -> pd.Series:
+    """Extract bar volumes as a `float64` Series indexed by bar timestamp —
+    same `Decimal` -> `float64` boundary as `closes_from_bars`/`ohlc_from_bars`.
+
+    Volume-based indicators (`rel_volume`, `volume_breakout`, `volume_roc`)
+    are optional confirmation, not a hard platform dependency: venues with
+    weak or absent volume (e.g. some CFD/FX feeds) still produce valid
+    `Bar.volume` values (spec allows zero, never negative — see
+    `domain/models/bar.py`), so this always returns a well-formed Series;
+    callers decide whether a market's volume is meaningful enough to gate on.
+    """
+    return pd.Series(
+        [float(bar.volume) for bar in bars],
+        index=[bar.timestamp for bar in bars],
+        dtype="float64",
+        name="volume",
+    )

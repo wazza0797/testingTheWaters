@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from trading_platform.indicators.wilder import wilder_smoothing
+
 
 def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
     """Wilder's Average True Range.
@@ -12,9 +14,8 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     - `abs(low - previous_close)`
 
     The first ATR (at index `period`) is the plain mean of the first `period`
-    True Ranges; every ATR after uses Wilder's smoothing
-    `atr = (prev_atr * (period - 1) + tr) / period` — same smoothing family as
-    RSI/EMA in this package (see `indicators/rsi.py`).
+    True Ranges; every ATR after uses Wilder's smoothing (`wilder.py`) — same
+    smoothing family as RSI/ADX in this package.
 
     Returns a `float64` Series aligned to `close`'s index; the first `period`
     entries are `NaN` (need `period` True Ranges, which themselves need a
@@ -42,13 +43,10 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
         )
         true_ranges.append(tr)
 
-    # true_ranges[0] corresponds to close index 1; first ATR at index `period`
-    # uses true_ranges[0:period].
-    atr = sum(true_ranges[:period]) / period
-    result.iloc[period] = atr
-
-    for i in range(period, len(true_ranges)):
-        atr = (atr * (period - 1) + true_ranges[i]) / period
-        result.iloc[i + 1] = atr
+    # true_ranges[0] corresponds to close index 1; wilder_smoothing seeds at
+    # true_ranges index `period - 1`, which is close index `period`.
+    smoothed = wilder_smoothing(pd.Series(true_ranges), period)
+    for i in range(period - 1, len(true_ranges)):
+        result.iloc[i + 1] = smoothed.iloc[i]
 
     return result
