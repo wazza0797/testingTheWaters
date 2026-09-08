@@ -137,8 +137,9 @@ uv run trading-platform walk-forward
 #    state persists under DATA_DIR/paper_state.json (Ctrl+C to stop)
 uv run trading-platform paper
 
-# 5. Exchange demo (Milestone 8a) — ENV=demo + BINANCE_DEMO_* keys;
+# 5. Exchange demo (Milestone 8a) — ENV=demo + venue demo keys;
 #    cash/positions from the sandbox account; orders hit demo-api
+# uv run trading-platform demo-smoke   # min-size open/close pipeclean first
 # uv run trading-platform demo
 ```
 
@@ -160,9 +161,10 @@ point-in-time instrument rules, static spread assumptions).
 
 Paper trading (Milestone 6) requires no exchange API keys and never calls
 order-placement methods on the exchange adapter. Notifications (Milestone 7)
-print fills/rejects/errors/heartbeats to the console; set `DISCORD_WEBHOOK_URL`
-and/or both `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env` to also fan out
-to Discord and/or Telegram. Live trading (Milestone 8) is
+print fills/rejects/errors/heartbeats to the console; set the Discord webhook
+for your `ENV` (`DISCORD_WEBHOOK_URL` for paper/local, `DISCORD_DEMO_WEBHOOK_URL`
+for demo, `DISCORD_LIVE_WEBHOOK_URL` for live) and/or both `TELEGRAM_BOT_TOKEN`
++ `TELEGRAM_CHAT_ID` to fan out remotely. Live trading (Milestone 8) is
 double-gated: `ENV=live` **and** `LIVE_TRADING_ENABLED=true` must both be set
 explicitly, or the process refuses to start (see
 [`Settings.require_live_trading_confirmed`](src/trading_platform/config/settings.py)).
@@ -177,8 +179,10 @@ in-container as it does locally.
 
 ```bash
 uv sync              # install deps + dev tools (pytest, mypy, ruff)
-uv run pytest        # unit tests (network tests excluded by default)
-uv run pytest -m network  # include tests that hit a live exchange
+uv run pytest -m "not network"   # unit + offline integration (default CI)
+uv run pytest -m network         # live exchange tests (Binance public + IG if creds set)
+# IG demo full dealing round-trip (paced; several minutes; places demo orders):
+#   IG_DEMO_INTEGRATION=1 IG_DEMO_EPIC=CS.D.GBPEUR.CFD.IP uv run pytest -m network tests/integration/test_ig_adapter_network.py -v
 uv run mypy src       # strict type checking
 uv run ruff check .   # lint
 uv run ruff format .  # format

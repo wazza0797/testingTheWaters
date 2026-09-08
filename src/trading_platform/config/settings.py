@@ -43,9 +43,26 @@ class Settings(BaseSettings):
         default=None, validation_alias="BINANCE_DEMO_API_SECRET"
     )
 
+    # IG Markets — demo (working) vs live (scaffolded; factory refuses trading).
+    ig_demo_api_key: str | None = Field(default=None, validation_alias="IG_DEMO_API_KEY")
+    ig_demo_username: str | None = Field(default=None, validation_alias="IG_DEMO_USERNAME")
+    ig_demo_password: str | None = Field(default=None, validation_alias="IG_DEMO_PASSWORD")
+    ig_demo_account_id: str | None = Field(default=None, validation_alias="IG_DEMO_ACCOUNT_ID")
+    ig_api_key: str | None = Field(default=None, validation_alias="IG_API_KEY")
+    ig_username: str | None = Field(default=None, validation_alias="IG_USERNAME")
+    ig_password: str | None = Field(default=None, validation_alias="IG_PASSWORD")
+    ig_account_id: str | None = Field(default=None, validation_alias="IG_ACCOUNT_ID")
+
     telegram_bot_token: str | None = Field(default=None, validation_alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str | None = Field(default=None, validation_alias="TELEGRAM_CHAT_ID")
+    # Discord: one webhook per run mode — never cross-post demo↔live↔paper.
     discord_webhook_url: str | None = Field(default=None, validation_alias="DISCORD_WEBHOOK_URL")
+    discord_demo_webhook_url: str | None = Field(
+        default=None, validation_alias="DISCORD_DEMO_WEBHOOK_URL"
+    )
+    discord_live_webhook_url: str | None = Field(
+        default=None, validation_alias="DISCORD_LIVE_WEBHOOK_URL"
+    )
 
     live_trading_enabled: bool = Field(default=False, validation_alias="LIVE_TRADING_ENABLED")
 

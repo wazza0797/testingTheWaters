@@ -24,6 +24,13 @@ class ExchangeAdapterError(TradingPlatformError):
     """Raised when an exchange adapter call fails (network, API, mapping)."""
 
 
+class ExchangeRateLimitError(ExchangeAdapterError):
+    """Venue rate / allowance limit exceeded.
+
+    Callers should back off (or wait for the limiter) — not retry immediately.
+    """
+
+
 class MarketDataError(TradingPlatformError):
     """Raised when market data cannot be read or written."""
 

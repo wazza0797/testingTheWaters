@@ -1,0 +1,18 @@
+---
+description: Keep .env in sync when .env.example changes
+alwaysApply: true
+---
+
+# `.env` / `.env.example` merge
+
+Whenever you **create, edit, or regenerate** `.env.example`:
+
+1. Immediately merge into the local **`.env`** (gitignored) if it exists.
+2. **Preserve** every existing `.env` assignment value for keys that already exist (including empty values the user intentionally cleared only if they were already present — prefer keeping the user's previous value over the example default when the key exists).
+3. **Add** any new keys from `.env.example` that are missing in `.env` (use the example's default/empty value).
+4. Prefer the **comment/section layout** from `.env.example` so docs stay current.
+5. Append any `.env`-only custom keys under a short "Preserved from previous .env" section so they are not dropped.
+6. **Never** commit `.env`, print secret values, or paste webhook/API credentials into chat.
+7. Tell the user briefly which **new key names** were added (names only) so they can fill them in.
+
+Do this in the same turn as the `.env.example` change — do not wait to be asked.

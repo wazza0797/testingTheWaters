@@ -26,26 +26,22 @@ class PassThroughRiskEngine:
     approves everything it can structurally act on and rejects the rest —
     no max-position, drawdown, or other real risk rules exist yet.
 
-    Long-only, since BTC/USDT is spot (no margin/shorting):
-    - `BUY` while already holding a position: rejected — this engine never
-      averages in or pyramids.
-    - `SELL`/`CLOSE` while flat: rejected — nothing to close.
-    - `BUY` while flat: sized via `EquityFractionSizer` against current
-      equity and the triggering bar's close (`Signal` has no price of its
-      own — see `SignalGenerated.bar`), then shrunk if needed so its
-      worst-case cost (fee plus a safety buffer for the spread/slippage the
-      *actual* fill may incur once latency elapses) never exceeds available
-      cash — see `_affordable_quantity`. Rejected outright if that leaves
-      nothing affordable.
-    - `SELL`/`CLOSE` while holding a position: closes the *entire* position
-      (no partial-reduce policy exists yet).
+    Position semantics (one open position per symbol, no pyramiding):
+
+    - `BUY` while flat → open long (sized + cash-affordable).
+    - `BUY` while short → cover the entire short (`OrderSide.BUY`).
+    - `BUY` while long → rejected.
+    - `SELL` while flat → open short **only if** `InstrumentRules.allows_short`
+      (derivatives/CFDs); spot stays False so SELL-while-flat is rejected.
+    - `SELL` while long → close the entire long.
+    - `SELL` while short → rejected (no short pyramiding).
+    - `CLOSE` while long → sell to flat; while short → buy to cover; flat → reject.
+
     - **Any** signal while an earlier order for the same symbol is still
       outstanding (queued on latency, or only partially filled): rejected.
       `IPortfolioView.position_for` only reflects *filled* fills, so without
-      this check a second `BUY` could be approved before the first one's
-      fill ever lands in the ledger (violating "never averages in"), or a
-      `SELL` could be approved while a `BUY` is still partially filling. See
-      `IPendingOrderTracker`.
+      this check a second entry could be approved before the first fill
+      lands. See `IPendingOrderTracker`.
 
     Rejections here are trading-policy-level (`RiskRejected`) and distinct
     from `execution/order_validator.py`'s exchange-rule-level rejections
@@ -93,7 +89,9 @@ class PassThroughRiskEngine:
 
         if signal.signal_type == SignalType.BUY:
             return self._evaluate_buy(signal, bar, rules, position)
-        if signal.signal_type in (SignalType.SELL, SignalType.CLOSE):
+        if signal.signal_type == SignalType.SELL:
+            return self._evaluate_sell(signal, bar, rules, position)
+        if signal.signal_type == SignalType.CLOSE:
             return self._evaluate_close(signal, bar, position)
         return RiskDecision(
             order=None, rejection_reason=f"unsupported signal_type {signal.signal_type!r}"
@@ -102,15 +100,53 @@ class PassThroughRiskEngine:
     def _evaluate_buy(
         self, signal: Signal, bar: Bar, rules: InstrumentRules, position: Position | None
     ) -> RiskDecision:
+        if position is not None and position.quantity < 0:
+            # Cover short.
+            return RiskDecision(
+                order=self._build_order(signal, bar, OrderSide.BUY, abs(position.quantity)),
+                rejection_reason=None,
+            )
         if position is not None and not position.is_flat:
             return RiskDecision(
                 order=None,
                 rejection_reason=(
-                    f"already in a position for {signal.symbol} "
+                    f"already in a long position for {signal.symbol} "
                     f"(qty={position.quantity}); ignoring BUY signal"
                 ),
             )
+        return self._evaluate_open(signal, bar, rules, OrderSide.BUY)
 
+    def _evaluate_sell(
+        self, signal: Signal, bar: Bar, rules: InstrumentRules, position: Position | None
+    ) -> RiskDecision:
+        if position is not None and position.quantity > 0:
+            # Close long.
+            return RiskDecision(
+                order=self._build_order(signal, bar, OrderSide.SELL, position.quantity),
+                rejection_reason=None,
+            )
+        if position is not None and position.quantity < 0:
+            return RiskDecision(
+                order=None,
+                rejection_reason=(
+                    f"already in a short position for {signal.symbol} "
+                    f"(qty={position.quantity}); ignoring SELL signal"
+                ),
+            )
+        if not rules.allows_short:
+            return RiskDecision(
+                order=None,
+                rejection_reason=(
+                    f"shorts not allowed for {signal.symbol} "
+                    f"(allows_short=False — spot/long-only instrument); "
+                    f"ignoring SELL-while-flat"
+                ),
+            )
+        return self._evaluate_open(signal, bar, rules, OrderSide.SELL)
+
+    def _evaluate_open(
+        self, signal: Signal, bar: Bar, rules: InstrumentRules, side: OrderSide
+    ) -> RiskDecision:
         price = bar.close
         equity = self._portfolio.equity({signal.symbol: price})
         quantity = self._sizer.size(equity, price, rules)
@@ -135,7 +171,7 @@ class PassThroughRiskEngine:
             )
 
         return RiskDecision(
-            order=self._build_order(signal, bar, OrderSide.BUY, affordable_quantity),
+            order=self._build_order(signal, bar, side, affordable_quantity),
             rejection_reason=None,
         )
 
@@ -155,6 +191,10 @@ class PassThroughRiskEngine:
         `fill_cost_fraction` (worst-case half-spread from `SpreadModel`,
         including volatility headroom) closes that gap without this engine
         depending on fill-simulation internals.
+
+        Used for both long opens and short opens: for shorts this is a
+        conservative stand-in for margin until a real CFD margin model lands
+        (same cash ceiling, not free leverage).
         """
         worst_case_unit_cost = price * (
             1 + self._cash_safety_buffer_pct + self._fill_cost_fraction + rules.taker_fee_rate
@@ -171,8 +211,13 @@ class PassThroughRiskEngine:
                 rejection_reason=f"no open position for {signal.symbol} to close",
             )
 
+        if position.quantity > 0:
+            return RiskDecision(
+                order=self._build_order(signal, bar, OrderSide.SELL, position.quantity),
+                rejection_reason=None,
+            )
         return RiskDecision(
-            order=self._build_order(signal, bar, OrderSide.SELL, position.quantity),
+            order=self._build_order(signal, bar, OrderSide.BUY, abs(position.quantity)),
             rejection_reason=None,
         )
 

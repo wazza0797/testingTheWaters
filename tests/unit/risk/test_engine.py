@@ -127,7 +127,7 @@ class TestBuySignal:
         decision = engine.evaluate(_signal(SignalType.BUY), make_bar())
 
         assert not decision.approved
-        assert "already in a position" in (decision.rejection_reason or "")
+        assert "already in a long position" in (decision.rejection_reason or "")
 
     def test_rejects_a_buy_that_sizes_to_zero(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules
@@ -277,7 +277,7 @@ class TestCashSufficiencyGuard:
 
 
 class TestSellAndCloseSignals:
-    def test_rejects_a_sell_when_flat(
+    def test_rejects_a_sell_when_flat_on_spot(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules
     ) -> None:
         engine = _engine(rules=btc_usdt_instrument_rules)
@@ -285,7 +285,7 @@ class TestSellAndCloseSignals:
         decision = engine.evaluate(_signal(SignalType.SELL), make_bar())
 
         assert not decision.approved
-        assert "no open position" in (decision.rejection_reason or "")
+        assert "shorts not allowed" in (decision.rejection_reason or "")
 
     def test_approves_a_sell_that_closes_the_full_position(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules
@@ -303,7 +303,7 @@ class TestSellAndCloseSignals:
         assert order.side == OrderSide.SELL
         assert order.quantity == Decimal("0.2")
 
-    def test_close_signal_behaves_the_same_as_sell(
+    def test_close_signal_behaves_the_same_as_sell_when_long(
         self, make_bar, btc_usdt_instrument_rules: InstrumentRules
     ) -> None:
         position = Position(
@@ -316,6 +316,94 @@ class TestSellAndCloseSignals:
         assert decision.approved
         assert decision.order is not None
         assert decision.order.side == OrderSide.SELL
+        assert decision.order.quantity == Decimal("0.2")
+
+
+class TestShortSignals:
+    def _cfd_rules(self, base: InstrumentRules) -> InstrumentRules:
+        return InstrumentRules(
+            exchange="ig",
+            symbol="CS.D.EURUSD.MINI.IP",
+            tick_size=base.tick_size,
+            step_size=base.step_size,
+            min_qty=base.min_qty,
+            min_notional=base.min_notional,
+            price_precision=base.price_precision,
+            qty_precision=base.qty_precision,
+            maker_fee_rate=base.maker_fee_rate,
+            taker_fee_rate=base.taker_fee_rate,
+            allows_short=True,
+        )
+
+    def test_sell_while_flat_opens_short_when_allows_short(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        rules = self._cfd_rules(btc_usdt_instrument_rules)
+        engine = PassThroughRiskEngine(
+            portfolio=StubPortfolio(Decimal("10000")),
+            instrument_rules={rules.symbol: rules},
+            sizer=EquityFractionSizer(1.0),
+            pending_orders=StubPendingOrderTracker(),
+        )
+        bar = make_bar(
+            symbol=rules.symbol,
+            close="50000",
+            open_="50000",
+            high="50000",
+            low="50000",
+        )
+
+        decision = engine.evaluate(_signal(SignalType.SELL, symbol=rules.symbol), bar)
+
+        assert decision.approved
+        assert decision.order is not None
+        assert decision.order.side == OrderSide.SELL
+        assert decision.order.quantity == Decimal("0.19960")
+
+    def test_buy_while_short_covers(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        rules = self._cfd_rules(btc_usdt_instrument_rules)
+        position = Position(
+            symbol=rules.symbol, quantity=Decimal("-0.2"), average_entry_price=Decimal("50000")
+        )
+        engine = PassThroughRiskEngine(
+            portfolio=StubPortfolio(Decimal("10000"), position),
+            instrument_rules={rules.symbol: rules},
+            sizer=EquityFractionSizer(1.0),
+            pending_orders=StubPendingOrderTracker(),
+        )
+
+        decision = engine.evaluate(
+            _signal(SignalType.BUY, symbol=rules.symbol), make_bar(symbol=rules.symbol)
+        )
+
+        assert decision.approved
+        assert decision.order is not None
+        assert decision.order.side == OrderSide.BUY
+        assert decision.order.quantity == Decimal("0.2")
+
+    def test_close_while_short_buys_to_cover(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        rules = self._cfd_rules(btc_usdt_instrument_rules)
+        position = Position(
+            symbol=rules.symbol, quantity=Decimal("-0.2"), average_entry_price=Decimal("50000")
+        )
+        engine = PassThroughRiskEngine(
+            portfolio=StubPortfolio(Decimal("10000"), position),
+            instrument_rules={rules.symbol: rules},
+            sizer=EquityFractionSizer(1.0),
+            pending_orders=StubPendingOrderTracker(),
+        )
+
+        decision = engine.evaluate(
+            _signal(SignalType.CLOSE, symbol=rules.symbol), make_bar(symbol=rules.symbol)
+        )
+
+        assert decision.approved
+        assert decision.order is not None
+        assert decision.order.side == OrderSide.BUY
         assert decision.order.quantity == Decimal("0.2")
 
 

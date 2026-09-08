@@ -72,8 +72,10 @@ Demo is for “does this venue’s order API and account behaviour feel right?�
 
 ### Phase C — Second venue
 
-- e.g. `exchanges/trading212/` practice adapter implementing the same port
-- Factory branch only — no changes to `DemoBroker` / strategy / risk
+- ~~e.g. `exchanges/trading212/` practice adapter~~ → **IG Markets** delivered:
+  [`m8c-ig-demo-adapter.md`](m8c-ig-demo-adapter.md) (`exchanges/ig/`, demo
+  working, live scaffolded + factory-gated)
+- Factory branch only for the demo loop — no changes to `DemoBroker` / strategy / risk *wiring*; risk/portfolio gained optional shorts via `allows_short` for derivatives
 
 ## Acceptance criteria
 

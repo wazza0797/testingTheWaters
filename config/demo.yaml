@@ -6,6 +6,14 @@ trading:
   symbol: BTC/USDT
   timeframe: 1h
 
+# --- IG Markets demo (CFDs) -------------------------------------------------
+# Uncomment the block below (and comment out the Binance `trading:` above) for
+# IG. Set ENV=demo + IG_DEMO_* in .env. `symbol` is the IG epic (not BASE/QUOTE).
+# trading:
+#   exchange: ig
+#   symbol: CS.D.GBPEUR.CFD.IP
+#   timeframe: 1h
+
 demo:
   poll_interval_sec: 30          # closed-bar poll (same idea as paper)
   order_poll_interval_sec: 5     # how often DemoBroker polls fetch_order
