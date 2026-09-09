@@ -1,10 +1,10 @@
 # Milestone 8a — Demo Execution (Exchange Sandbox)
 
-**Status:** In progress (Phase B — Binance demo trading)
+**Status:** Complete (Phases A–C)
 
 **Depends on:** Milestone 6 (paper loop / portfolio), Milestone 7 (notifications)
 
-**Unblocks:** Multi-venue demo (Trading 212 practice, etc.), later Milestone 8b (mainnet live)
+**Unblocks:** Further venue adapters; Milestone 8b (mainnet live) after demo soak
 
 ## Goals
 
@@ -39,10 +39,10 @@ Demo is for “does this venue’s order API and account behaviour feel right?�
 
 ## Out of scope (this milestone)
 
-- Mainnet live orders (`ENV=live` + `LIVE_TRADING_ENABLED`)
-- Trading 212 (or other) adapter implementation — **seam only**
+- Mainnet live orders (`ENV=live` + `LIVE_TRADING_ENABLED`) — Milestone 8b
 - Full user-data WebSocket (polling order status is enough for v1)
 - Replacing local paper mode
+- Additional venues beyond Binance + IG (same adapter + factory seam)
 
 ## Deliverables
 
@@ -53,13 +53,14 @@ Demo is for “does this venue’s order API and account behaviour feel right?�
 | `DemoBroker` | `IBroker` over `IExchangeAdapter` |
 | `exchanges/factory.py` | `build_exchange_adapter(exchange, mode, settings)` |
 | Binance demo URL/keys wiring | First concrete adapter behind the factory |
+| IG Markets demo adapter | Second venue — [`m8c-ig-demo-adapter.md`](m8c-ig-demo-adapter.md) |
 | `config/demo.yaml` + `DemoConfig` | Overlay for `trading-platform demo` |
-| CLI `demo` | Same loop shape as `paper`, `DemoBroker` instead of `PaperBroker` |
+| CLI `demo` + `demo-smoke` | Full loop + min-size open/close pipeclean |
 | Docs / roadmap | Architecture diagram includes `DemoBroker` |
 
 ## Phased implementation
 
-### Phase A+B — Scaffold + Binance Demo (this branch)
+### Phase A+B — Scaffold + Binance Demo ✅
 
 - Milestone doc, `ENV=demo`, domain order-status model, port extensions
 - `DemoBroker` with fakes in unit tests (no network)
@@ -70,12 +71,13 @@ Demo is for “does this venue’s order API and account behaviour feel right?�
 - `config/demo.yaml`, CLI `trading-platform demo`, `DemoTradingLoop`
 - Roadmap / architecture updates
 
-### Phase C — Second venue
+### Phase C — Second venue (IG) ✅
 
-- ~~e.g. `exchanges/trading212/` practice adapter~~ → **IG Markets** delivered:
-  [`m8c-ig-demo-adapter.md`](m8c-ig-demo-adapter.md) (`exchanges/ig/`, demo
-  working, live scaffolded + factory-gated)
-- Factory branch only for the demo loop — no changes to `DemoBroker` / strategy / risk *wiring*; risk/portfolio gained optional shorts via `allows_short` for derivatives
+- [`m8c-ig-demo-adapter.md`](m8c-ig-demo-adapter.md): `exchanges/ig/`, demo
+  working, live scaffolded + factory-gated
+- Platform shorts via `InstrumentRules.allows_short` (spot false, IG CFD true)
+- Rate-limited IG REST client; gated live network integration tests
+- Discord webhooks selected by `ENV` (paper / demo / live)
 
 ## Acceptance criteria
 
@@ -84,3 +86,4 @@ Demo is for “does this venue’s order API and account behaviour feel right?�
 - `ENV=demo` cannot place mainnet orders (adapter constructed with demo URLs only)
 - Unit tests cover `DemoBroker` with a fake adapter (no network)
 - Binance Phase B: demo fill triggers same notification path as paper fills
+- IG Phase C: demo open/close path works; live factory still refused

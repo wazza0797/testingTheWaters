@@ -4,20 +4,19 @@ A modular, extensible algorithmic trading platform — crypto-first (BTC/USDT on
 Binance), paper trading before live, designed from day one to support
 multiple exchanges, strategies, and asset classes.
 
-> **Status:** Milestones 0–7 complete, including 3.5 (composable
-> `RuleStrategy` / `RegimeRouterStrategy`). Milestone 8a (exchange
-> demo/practice execution) is in progress — see
-> [`docs/milestones/`](docs/milestones/) and the project plan. Local paper
-> trading remains available; mainnet live is later.
+> **Status:** Milestones 0–8a complete (including 3.5 composable strategies and
+> 4.5 validation). Demo execution works for **Binance** and **IG Markets**;
+> mainnet live (M8b) remains gated. See [`docs/milestones/`](docs/milestones/).
+> Local paper trading remains available.
 
 ## Non-Goals (for now)
 
 - Not a "one-click trading bot" — no strategy logic is baked into core modules.
-- Not multi-exchange/multi-asset yet — Binance + BTC/USDT is the first vertical
-  slice; the architecture is exchange/asset-agnostic by design (see
+- Not every venue/asset class yet — Binance spot and IG CFDs are the first
+  vertical slices; the architecture stays exchange/asset-agnostic (see
   [`docs/architecture.md`](docs/architecture.md)).
-- Not live-trading-ready — live execution is gated behind paper trading
-  validation and explicit environment confirmation (Milestone 8).
+- Not live-trading-ready — live execution is gated behind demo soak and
+  explicit environment confirmation (Milestone 8b).
 
 ## Architecture at a Glance
 
@@ -201,6 +200,5 @@ tracked in the project plan and mirrored under
 
 | Milestone | Focus |
 |-----------|-------|
-| M8a | Demo/practice execution via `DemoBroker` (any exchange adapter) |
-| M9 | Docker deployment |
 | M8b | Mainnet live (double-gated; after demo soak) |
+| M9 | Docker / VPS deployment |

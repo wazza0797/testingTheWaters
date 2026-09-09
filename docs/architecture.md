@@ -571,9 +571,9 @@ as each milestone lands.
 | M4.5 — Backtest Validation & Realism | Complete (A+B+C) | [`m4.5-backtest-validation-and-realism.md`](milestones/m4.5-backtest-validation-and-realism.md) — hold-out IS/OOS, volatility-aware spread, walk-forward grid search |
 | M5 — Performance Analytics | Complete | [`m5-performance-analytics.md`](milestones/m5-performance-analytics.md) — Sharpe, drawdown, regime splits, significance flags |
 | M6 — Paper Trading | Complete | [`m6-paper-trading.md`](milestones/m6-paper-trading.md) — live closed-bar poll, virtual fills, JSON portfolio state |
-| M7 — Notifications | Complete | [`m7-notifications.md`](milestones/m7-notifications.md) — console + Discord/Telegram via event subscriptions |
-| M8a — Demo Execution | In progress | [`m8-demo-execution.md`](milestones/m8-demo-execution.md) — exchange sandbox via `DemoBroker` + `IExchangeAdapter` (Binance first; multi-venue ready) |
+| M7 — Notifications | Complete | [`m7-notifications.md`](milestones/m7-notifications.md) — console + Discord/Telegram via event subscriptions; Discord webhook per `ENV` |
+| M8a — Demo Execution | Complete (A–C) | [`m8-demo-execution.md`](milestones/m8-demo-execution.md) — `DemoBroker` + Binance demo; IG Phase C in [`m8c-ig-demo-adapter.md`](milestones/m8c-ig-demo-adapter.md) |
 | M8b — Live Execution | Planned | Mainnet `LiveBroker`, double-gated |
 | M9 — Docker | Planned | — |
 
-**Recommended build order:** ~~M0–M7~~ ✅ → **M8a demo** → paper/demo soak → M9 Docker (optional) → M8b live.
+**Recommended build order:** ~~M0–M8a~~ ✅ → paper/demo soak → M9 Docker (optional) → **M8b live**.
