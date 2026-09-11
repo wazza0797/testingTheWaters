@@ -328,3 +328,62 @@ class TestNotificationHandler:
             assert done == []
             release.set()
         assert done == ["HEARTBEAT mode=paper uptime=1.0s"]
+
+
+class TestNotifyDemoResearch:
+    def test_posts_via_injected_notifier(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url: str, json: dict, timeout: float) -> httpx.Response:
+            captured["url"] = url
+            captured["json"] = json
+            return httpx.Response(204)
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/demo",
+            http_post=fake_post,
+        )
+        from trading_platform.notifications.research import notify_demo_research
+
+        assert notify_demo_research("hello research", notifier=notifier) is True
+        assert captured["url"] == "https://discord.com/api/webhooks/1/demo"
+        assert captured["json"] == {"content": "[INFO] hello research"}
+
+    def test_disabled_skips_without_calling(self) -> None:
+        calls = 0
+
+        def fake_post(url: str, json: dict, timeout: float) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(204)
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/demo",
+            http_post=fake_post,
+        )
+        from trading_platform.notifications.research import notify_demo_research
+
+        assert notify_demo_research("x", enabled=False, notifier=notifier) is False
+        assert calls == 0
+
+    def test_missing_webhook_returns_false(self) -> None:
+        from trading_platform.notifications.research import notify_demo_research
+
+        settings = Settings(
+            _env_file=None,
+            DISCORD_DEMO_WEBHOOK_URL=None,
+            DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1/paper",
+        )
+        assert notify_demo_research("x", settings=settings) is False
+
+    def test_http_failure_does_not_raise(self) -> None:
+        def fake_post(url: str, json: dict, timeout: float) -> httpx.Response:
+            return httpx.Response(500, text="boom")
+
+        notifier = DiscordNotifier(
+            "https://discord.com/api/webhooks/1/demo",
+            http_post=fake_post,
+        )
+        from trading_platform.notifications.research import notify_demo_research
+
+        assert notify_demo_research("x", notifier=notifier) is False
