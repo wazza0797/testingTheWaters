@@ -64,3 +64,46 @@ class TestFillableQuantity:
         )
 
         assert fillable == Decimal("5")
+
+
+class TestAssumeFullLiquidityWhenNoVolume:
+    """`assume_full_liquidity_when_no_volume` — for feeds like Yahoo-sourced
+    spot FX (`config/ig-gbpeur.yaml`) whose bars report `volume=0` because the
+    source has no genuine trade-volume figure, not because nothing traded.
+    """
+
+    def test_defaults_to_off_preserving_zero_volume_fills_nothing(self) -> None:
+        model = PartialFillModel(volume_participation_rate=0.10)
+
+        assert model.fillable_quantity(
+            bar_volume=Decimal("0"), remaining_qty=Decimal("10")
+        ) == Decimal("0")
+
+    def test_fills_full_remaining_qty_on_zero_volume_when_enabled(self) -> None:
+        model = PartialFillModel(
+            volume_participation_rate=0.10, assume_full_liquidity_when_no_volume=True
+        )
+
+        fillable = model.fillable_quantity(bar_volume=Decimal("0"), remaining_qty=Decimal("10"))
+
+        assert fillable == Decimal("10")
+
+    def test_still_fills_nothing_for_zero_remaining_qty_when_enabled(self) -> None:
+        model = PartialFillModel(
+            volume_participation_rate=0.10, assume_full_liquidity_when_no_volume=True
+        )
+
+        assert model.fillable_quantity(
+            bar_volume=Decimal("0"), remaining_qty=Decimal("0")
+        ) == Decimal("0")
+
+    def test_does_not_affect_positive_volume_bars_when_enabled(self) -> None:
+        model = PartialFillModel(
+            volume_participation_rate=0.10, assume_full_liquidity_when_no_volume=True
+        )
+
+        fillable = model.fillable_quantity(
+            bar_volume=Decimal("1000"), remaining_qty=Decimal("500")
+        )
+
+        assert fillable == Decimal("100")  # normal 10%-of-volume cap still applies

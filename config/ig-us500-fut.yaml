@@ -1,0 +1,44 @@
+# IG Markets US 500 *futures* CFD research overlay.
+# Epic: IX.D.SPTRD.FWS2.IP (US 500 $250, dated — currently SEP-26 on demo).
+# Yahoo ES=F continuous futures stand-in (not IG's own mid; no roll modelling).
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo 'ES=F' --epic IX.D.SPTRD.FWS2.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_long_bias.py --overlays ig-us500-fut
+#
+# Cost model: futures CFDs have no daily overnight funding; cost is in the
+# spread. Live demo bid/offer ~1.0 pt (~1.3 bps at ~7670). Use 1.5 bps floor.
+
+trading:
+  exchange: ig
+  symbol: IX.D.SPTRD.FWS2.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "100000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.5
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

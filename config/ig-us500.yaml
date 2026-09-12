@@ -1,0 +1,45 @@
+# IG Markets US 500 cash CFD research overlay.
+# Yahoo ^GSPC stand-in for OHLCV (IG demo /prices is shallow) — indicative only.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo '^GSPC' --epic IX.D.SPTRD.DAILY.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_sweep.py --overlays ig-us500
+#
+# Costs: IG US 500 in-hours spread ~0.4 pts (wider around open/close / off-hours).
+# At ~6500 that is ~0.6 bps full spread in-hours; use 1.0 bps as a blended floor.
+# Overnight interest + dividend adjustments not modelled yet.
+
+trading:
+  exchange: ig
+  symbol: IX.D.SPTRD.DAILY.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "50000"    # US500 ~7.5k pts; leave headroom vs $10k + min_qty=1
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.0
+  # At ~7600, 1.0 bps ≈ 0.8 pts blended (in-hours often 0.4).
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

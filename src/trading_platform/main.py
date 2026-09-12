@@ -174,9 +174,15 @@ def download_data(
         None, "--timeframe", help="e.g. 1h (default: config trading.timeframe)"
     ),
     days: int = typer.Option(365, "--days", help="Days of history to backfill from today."),
+    overlay: str | None = typer.Option(
+        None,
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (e.g. 'ig-gbpeur' for a "
+        "non-default exchange/symbol/timeframe). Omit to use config/default.yaml as-is.",
+    ),
 ) -> None:
     """Download historical OHLCV bars and cache instrument rules (Milestone 1)."""
-    container = _bootstrap()
+    container = _bootstrap(overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
@@ -409,6 +415,13 @@ def backtest(
         "--report",
         help="Optional machine-readable output: 'json' prints PerformanceReport JSON after the summary.",
     ),
+    overlay: str = typer.Option(
+        "backtest",
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (default: 'backtest'). Use a "
+        "research overlay (e.g. 'ig-gbpeur') that itself carries the trading/backtest/"
+        "strategy blocks for a non-default exchange/symbol/timeframe.",
+    ),
 ) -> None:
     """Replay cached historical bars through strategy -> risk -> execution
     with realistic simulated fills, and print performance analytics
@@ -424,7 +437,7 @@ def backtest(
         typer.echo(f"Unsupported --report value '{report}' (use 'json').", err=True)
         raise typer.Exit(code=1)
 
-    container = _bootstrap(overlay="backtest")
+    container = _bootstrap(overlay=overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
@@ -538,6 +551,13 @@ def walk_forward(
     end: str | None = typer.Option(
         None, "--end", help="ISO date/datetime to end at, exclusive (default: latest cached bar)."
     ),
+    overlay: str = typer.Option(
+        "backtest",
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (default: 'backtest'). Use a "
+        "research overlay (e.g. 'ig-gbpeur') that itself carries the trading/backtest/"
+        "strategy blocks for a non-default exchange/symbol/timeframe.",
+    ),
 ) -> None:
     """Run rolling walk-forward optimization (Milestone 4.5 Phase C).
 
@@ -548,7 +568,7 @@ def walk_forward(
     Configure windows / param_grid / objective under
     `validation.walk_forward` in config/backtest.yaml.
     """
-    container = _bootstrap(overlay="backtest")
+    container = _bootstrap(overlay=overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name

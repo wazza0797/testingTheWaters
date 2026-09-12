@@ -8,9 +8,16 @@ from trading_platform.domain.models.signal import Signal, SignalType
 from trading_platform.domain.ports.strategy import StrategyContext
 from trading_platform.indicators import build_default_registry
 from trading_platform.strategies.bar_window import BarWindow
-from trading_platform.strategies.rules import Condition, evaluate, parse_condition
-from trading_platform.strategies.rules.evaluator import TriBool
-from trading_platform.strategies.rules.parser import validate_condition_indicators
+from trading_platform.strategies.rules import (
+    Condition,
+    LongShortPlaybook,
+    PlaybookEdgeState,
+    evaluate,
+    evaluate_playbook_signals,
+    parse_condition,
+    parse_playbook,
+    validate_condition_indicators,
+)
 
 # Same rationale as SmaCrossoverStrategy/RuleStrategy's placeholder:
 # StrategyHandler always overwrites Signal.strategy_name with a per-instance
@@ -23,40 +30,68 @@ _PLACEHOLDER_STRATEGY_NAME = "regime_router"
 _SUPPORTED_DEFAULT = "flat"
 
 
+def _validate_entry_hours(start: int | None, end: int | None) -> tuple[int | None, int | None]:
+    """Validate optional `[start, end)` UTC hour window for new entries.
+
+    Both None → no session filter. Both set → hours in `0..23`, end exclusive.
+    `start < end` is a same-day window; `start > end` wraps across midnight.
+    Exactly one set is rejected.
+    """
+    if start is None and end is None:
+        return None, None
+    if start is None or end is None:
+        raise ValueError(
+            "entry_hour_start_utc and entry_hour_end_utc must both be set or both omitted"
+        )
+    if not 0 <= start <= 23 or not 0 <= end <= 23:
+        raise ValueError(f"entry hours must be in 0..23, got start={start}, end={end}")
+    if start == end:
+        raise ValueError("entry_hour_start_utc and entry_hour_end_utc must differ")
+    return start, end
+
+
 class _RegimeSlot:
     """One parsed `regimes[]` entry: a `when` predicate plus its own nested
-    entry/exit playbook (reusing the exact same condition AST/evaluator as
-    `RuleStrategy` — regimes are strategy *selection*, not a different
-    rule language). Mutable: tracks this regime's own entry/exit edge state
+    long/short playbook (`strategies/rules/playbook.py` — the same
+    long/short parsing and edge-tracked signal emission `RuleStrategy`
+    uses; regimes are strategy *selection*, not a different rule
+    language). Mutable: tracks this regime's own playbook edge state
     independently of every other regime's, reset via `reset_edges()`
     whenever this regime is (re)activated so a stale edge from a previous
     activation can never suppress a legitimate fresh signal.
     """
 
-    __slots__ = ("name", "when", "entry", "exit", "prev_entry", "prev_exit")
+    __slots__ = ("name", "when", "playbook", "edge_state")
 
-    def __init__(self, name: str, when: Condition, entry: Condition, exit: Condition) -> None:
+    def __init__(self, name: str, when: Condition, playbook: LongShortPlaybook) -> None:
         self.name = name
         self.when = when
-        self.entry = entry
-        self.exit = exit
-        self.prev_entry: TriBool = None
-        self.prev_exit: TriBool = None
+        self.playbook = playbook
+        self.edge_state = PlaybookEdgeState()
 
     def reset_edges(self) -> None:
-        self.prev_entry = None
-        self.prev_exit = None
+        self.edge_state.reset()
 
 
 class RegimeRouterStrategy:
     """Regime detection driving strategy *selection*: each `regimes[]` entry
     is a `when` condition (the same AND/OR/NOT tree as `RuleStrategy`, e.g.
     `EMA50 > EMA200 AND ADX > 25 AND vol_percentile > 50`) paired with its
-    own nested entry/exit playbook. On every bar, the **first** regime
-    whose `when` evaluates `True` becomes active; only that regime's
-    playbook may open new positions while it is active — see the
-    composable-strategies milestone doc for the full design write-up and
-    worked YAML example.
+    own nested playbook. On every bar, the **first** regime whose `when`
+    evaluates `True` becomes active; only that regime's playbook may open
+    new positions while it is active — see the composable-strategies
+    milestone doc for the full design write-up and worked YAML example.
+
+    **Playbook shape** (per regime, parsed by `strategies/rules/playbook.py`
+    — identical rules to `RuleStrategy`): either legacy long-only
+    `{"entry": ..., "exit": ...}`, or long/short via any of
+    `long_entry`/`long_exit`/`short_entry`/`short_exit` (each side's entry
+    and exit given together; at least one side configured; mixing the two
+    shapes is rejected). Optional ATR-multiple `*_stop_atr` /
+    `*_take_profit_atr` (and shared `stop_atr_period`) may sit beside the
+    trees — same semantics as `RuleStrategy`. A `BUY`/`SELL` opens the
+    matching side while flat; stop/TP or the exit tree for whichever side
+    is currently open fires `CLOSE`.
 
     **Hysteresis** (`min_regime_bars`): once a regime activates, it stays
     active for at least `min_regime_bars` bars before a different `when`
@@ -67,15 +102,15 @@ class RegimeRouterStrategy:
     **Regime switches while holding a position**: this strategy does not
     keep routing bars through a deactivated regime's own exit tree once a
     switch happens (it may not even be re-evaluated for a long time). If a
-    position is open at the moment `when` selects a *different* regime (or
-    no regime — the `default: "flat"` state), this strategy emits an
-    unconditional `CLOSE` on that same bar as a safety-net flatten, rather
-    than trusting a playbook it just walked away from to still be a
-    sensible exit signal for what may now be a different market regime.
-    `PassThroughRiskEngine`'s pending-order check means a same-bar flatten
-    `CLOSE` plus a freshly-activated regime's `BUY` never double-fire: the
-    `BUY` is naturally deferred to the next bar once the `CLOSE` actually
-    fills.
+    position (long or short) is open at the moment `when` selects a
+    *different* regime (or no regime — the `default: "flat"` state), this
+    strategy emits an unconditional `CLOSE` on that same bar as a
+    safety-net flatten, rather than trusting a playbook it just walked
+    away from to still be a sensible exit signal for what may now be a
+    different market regime. `PassThroughRiskEngine`'s pending-order check
+    means a same-bar flatten `CLOSE` plus a freshly-activated regime's
+    `BUY`/`SELL` never double-fire: the new entry is naturally deferred to
+    the next bar once the `CLOSE` actually fills.
 
     `default` currently only supports `"flat"` (no regime matched -> no new
     entries, safety-net flatten as above) — present as an explicit param
@@ -89,6 +124,9 @@ class RegimeRouterStrategy:
         lookback: int = 250,
         min_regime_bars: int = 1,
         default: str = "flat",
+        entry_hour_start_utc: int | None = None,
+        entry_hour_end_utc: int | None = None,
+        flatten_hour_utc: int | None = None,
     ) -> None:
         if not regimes:
             raise ValueError("regimes must be a non-empty list")
@@ -99,6 +137,12 @@ class RegimeRouterStrategy:
                 f"default must be {_SUPPORTED_DEFAULT!r} (the only currently supported "
                 f"value), got {default!r}"
             )
+        self._entry_hour_start_utc, self._entry_hour_end_utc = _validate_entry_hours(
+            entry_hour_start_utc, entry_hour_end_utc
+        )
+        if flatten_hour_utc is not None and not 0 <= flatten_hour_utc <= 23:
+            raise ValueError(f"flatten_hour_utc must be in 0..23, got {flatten_hour_utc}")
+        self._flatten_hour_utc = flatten_hour_utc
 
         available = build_default_registry().available()
         self._regimes = [self._parse_regime(raw, available) for raw in regimes]
@@ -119,21 +163,15 @@ class RegimeRouterStrategy:
         name = raw["name"]
         if not isinstance(name, str) or not name:
             raise ValueError(f"regime 'name' must be a non-empty string, got {name!r}")
-        playbook = raw["playbook"]
-        if not isinstance(playbook, Mapping) or "entry" not in playbook or "exit" not in playbook:
-            raise ValueError(
-                f"regime {name!r} 'playbook' must be a mapping with 'entry' and 'exit', "
-                f"got {playbook!r}"
-            )
+        playbook_raw = raw["playbook"]
+        if not isinstance(playbook_raw, Mapping):
+            raise ValueError(f"regime {name!r} 'playbook' must be a mapping, got {playbook_raw!r}")
 
         when = parse_condition(raw["when"])
-        entry = parse_condition(playbook["entry"])
-        exit_condition = parse_condition(playbook["exit"])
         validate_condition_indicators(when, available)
-        validate_condition_indicators(entry, available)
-        validate_condition_indicators(exit_condition, available)
+        playbook = parse_playbook(playbook_raw, available, label=f"regime {name!r} 'playbook'")
 
-        return _RegimeSlot(name=name, when=when, entry=entry, exit=exit_condition)
+        return _RegimeSlot(name=name, when=when, playbook=playbook)
 
     def on_start(self, ctx: StrategyContext) -> None:
         self._window.clear()
@@ -155,12 +193,49 @@ class RegimeRouterStrategy:
         else:
             self._bars_since_switch += 1
 
-        if self._active_index is not None:
-            signals.extend(
-                self._evaluate_playbook(self._regimes[self._active_index], bar, bars, ctx)
+        if self._should_session_flatten(bar, ctx):
+            # Force flat near cash-session close; skip playbook entries this bar.
+            signals.append(
+                Signal(
+                    symbol=bar.symbol,
+                    signal_type=SignalType.CLOSE,
+                    strategy_name=_PLACEHOLDER_STRATEGY_NAME,
+                    timestamp=bar.timestamp,
+                    metadata={"reason": "session_flatten", "hour_utc": bar.timestamp.hour},
+                )
             )
+            return signals
+
+        if self._active_index is not None:
+            playbook_signals = self._evaluate_playbook(
+                self._regimes[self._active_index], bar, bars, ctx
+            )
+            if not self._in_entry_window(bar):
+                playbook_signals = [
+                    s for s in playbook_signals if s.signal_type == SignalType.CLOSE
+                ]
+            signals.extend(playbook_signals)
 
         return signals
+
+    def _in_entry_window(self, bar: Bar) -> bool:
+        start = self._entry_hour_start_utc
+        end = self._entry_hour_end_utc
+        if start is None or end is None:
+            return True
+        hour = bar.timestamp.hour
+        if start < end:
+            return start <= hour < end
+        # Wrap across midnight (e.g. 22..6).
+        return hour >= start or hour < end
+
+    def _should_session_flatten(self, bar: Bar, ctx: StrategyContext) -> bool:
+        if self._flatten_hour_utc is None:
+            return False
+        position = ctx.position_for(bar.symbol)
+        if position is None or position.is_flat:
+            return False
+        return bar.timestamp.hour >= self._flatten_hour_utc
 
     def _select_matching_regime(self, bars: list[Bar], ctx: StrategyContext) -> int | None:
         for i, regime in enumerate(self._regimes):
@@ -191,27 +266,25 @@ class RegimeRouterStrategy:
     def _evaluate_playbook(
         self, regime: _RegimeSlot, bar: Bar, bars: list[Bar], ctx: StrategyContext
     ) -> list[Signal]:
-        entry_trace: dict[str, TriBool] = {}
-        exit_trace: dict[str, TriBool] = {}
-        entry_now = evaluate(regime.entry, bars, ctx, entry_trace)
-        exit_now = evaluate(regime.exit, bars, ctx, exit_trace)
-
         position = ctx.position_for(bar.symbol)
         flat = position is None or position.is_flat
+        is_short = position is not None and position.quantity < 0
+        entry_price = None if flat or position is None else position.average_entry_price
 
-        signals: list[Signal] = []
-        if flat and entry_now is True and regime.prev_entry is not True:
-            signals.append(self._signal(bar, SignalType.BUY, regime.name, entry_trace))
-        if not flat and exit_now is True and regime.prev_exit is not True:
-            signals.append(self._signal(bar, SignalType.CLOSE, regime.name, exit_trace))
-
-        regime.prev_entry = entry_now
-        regime.prev_exit = exit_now
-        return signals
+        fires = evaluate_playbook_signals(
+            regime.playbook,
+            regime.edge_state,
+            bars,
+            ctx,
+            flat=flat,
+            is_short=is_short,
+            entry_price=entry_price,
+        )
+        return [self._signal(bar, signal_type, regime.name, trace) for signal_type, trace in fires]
 
     @staticmethod
     def _signal(
-        bar: Bar, signal_type: SignalType, regime_name: str, trace: Mapping[str, TriBool]
+        bar: Bar, signal_type: SignalType, regime_name: str, trace: Mapping[str, Any]
     ) -> Signal:
         return Signal(
             symbol=bar.symbol,

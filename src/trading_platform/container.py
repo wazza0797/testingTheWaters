@@ -283,7 +283,12 @@ def build_backtest_engine(
             atr_period=backtest_config.spread_atr_period,
         ),
         fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
-        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        partial_fill_model=PartialFillModel(
+            backtest_config.volume_participation_rate,
+            assume_full_liquidity_when_no_volume=(
+                backtest_config.assume_full_liquidity_when_no_volume
+            ),
+        ),
         use_next_bar_open=backtest_config.use_next_bar_open,
     )
     broker = SimBroker(
@@ -418,7 +423,12 @@ def build_paper_session(
             atr_period=backtest_config.spread_atr_period,
         ),
         fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
-        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        partial_fill_model=PartialFillModel(
+            backtest_config.volume_participation_rate,
+            assume_full_liquidity_when_no_volume=(
+                backtest_config.assume_full_liquidity_when_no_volume
+            ),
+        ),
         use_next_bar_open=backtest_config.use_next_bar_open,
     )
     broker = PaperBroker(

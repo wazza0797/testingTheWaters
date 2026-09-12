@@ -112,6 +112,12 @@ class BacktestConfig(BaseModel):
     `spread_volatility_k` (default `0` = off) adds ATR-scaled width on top of
     `spread_bps` so fills are more expensive in volatile regimes — see
     `backtesting/models/spread_model.py` and Milestone 4.5 Phase B.
+
+    `assume_full_liquidity_when_no_volume` (default `False`) disables the
+    `volume_participation_rate` cap on bars whose `volume` is `0` — for
+    venues/data sources with no genuine trade-volume figure (e.g. spot-FX
+    data backing a CFD instrument), not a general crypto default. See
+    `backtesting/models/partial_fill_model.py::PartialFillModel` docstring.
     """
 
     starting_cash: Decimal = Decimal("10000")
@@ -122,6 +128,7 @@ class BacktestConfig(BaseModel):
     spread_atr_period: int = 14
     latency_bars: int = 1
     volume_participation_rate: float = 0.10
+    assume_full_liquidity_when_no_volume: bool = False
     assume_maker_on_limit: bool = True
     use_next_bar_open: bool = True
 

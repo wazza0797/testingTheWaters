@@ -1,0 +1,89 @@
+# IG Markets GBP/EUR CFD research overlay (see docs/milestones/m8c-ig-demo-adapter.md
+# and the GBPEUR 15m long/short strategy research plan). Self-contained: this
+# overlay replaces `backtest.yaml` wholesale when passed via `--overlay
+# ig-gbpeur` (config overlays are not stacked — see `config/loader.py`), so it
+# repeats the backtest/validation/analytics blocks `backtest.yaml` normally
+# provides rather than only the IG-specific trading block.
+#
+#   uv run trading-platform download-data --overlay ig-gbpeur --days 180
+#   uv run trading-platform backtest --overlay ig-gbpeur
+#   uv run trading-platform walk-forward --overlay ig-gbpeur
+#
+# Requires IG_DEMO_API_KEY / IG_DEMO_USERNAME / IG_DEMO_PASSWORD in `.env` —
+# IG has no public OHLCV endpoint, so even cached-only backtest runs build a
+# demo-credentialed adapter (see `exchanges/factory.py::_build_ig`).
+
+trading:
+  exchange: ig
+  symbol: CS.D.GBPEUR.CFD.IP
+  timeframe: 15m
+
+# Fill-simulation parameters tuned for IG GBP/EUR CFD (see IG Help Centre
+# "Forex CFD product details" — GBP/EUR min 2.0 / avg ~2.73 / session-avg
+# ~3.25 *points*). One FX point = 0.0001 on this pair. Converted to our
+# `spread_bps` units (full bid-ask as basis-points of mid) at mid≈1.16:
+#   2.0 pts → ~1.72 bps,  2.73 pts → ~2.35 bps,  3.25 pts → ~2.80 bps.
+# We use the published *average* (~2.4 bps) as the floor rather than the
+# theoretical minimum — matches what a typical fill sees, not the best case.
+# IG has no separate maker/taker fee on FX CFDs (fee rates stay 0 in
+# InstrumentRules); overnight tom-next funding is *not* modelled yet.
+backtest:
+  starting_cash: "10000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 2.4             # ≈ IG GBP/EUR average full spread in bps-of-mid
+  # IG's published min→avg widening on this pair is modest (~2.0 → 2.73 pts).
+  # Keep a light ATR scaler so news spikes cost more, but don't let it dominate
+  # the floor the way crypto-tuned k=1.0 did (see earlier research notes).
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  # The Yahoo-sourced spot GBP/EUR bars backing this instrument (see
+  # scripts/backfill_gbpeur_external.py) always report volume=0 — Yahoo's
+  # FX feed carries no genuine trade-volume figure. Without this flag,
+  # `PartialFillModel` treats volume=0 as "nothing traded, nothing can
+  # fill", which wedges every order forever (first BUY never fills, every
+  # later signal is rejected as "already pending"). GBP/EUR is one of the
+  # most liquid FX pairs in the world at any plausible CFD size, so
+  # "assume full liquidity" is the right approximation here — this is a
+  # deliberate override, not the platform default (Binance's real trade
+  # volume keeps the normal cap).
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+# Hold-out disabled by default for exploratory recipe search; enable with
+# explicit train_end/test_start once a recipe looks promising on the full
+# sample.
+validation:
+  enabled: false
+
+  # Walk-forward (Milestone 4.5 Phase C) windows sized for 15m bars (96/day)
+  # instead of 1h — ~45 IS days / ~15 OOS days per fold, non-overlapping OOS.
+  walk_forward:
+    is_bars: 4320                 # ~45 days of 15m bars
+    oos_bars: 1440                # ~15 days OOS per fold
+    step_bars: 1440                # slide by OOS length (non-overlapping OOS)
+    objective: sharpe_daily
+    param_grid:
+      fast_period: [5, 10, 15]
+      slow_period: [20, 30, 40]
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+# Placeholder default — long-only SMA crossover, same shape as
+# config/default.yaml/backtest.yaml, kept active until the long/short
+# recipe search below picks a winner (see the milestone plan's "research
+# recipes" step, which promotes the best into this block).
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

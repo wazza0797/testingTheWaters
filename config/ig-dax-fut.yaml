@@ -1,0 +1,45 @@
+# IG Markets Germany 40 *futures* CFD research overlay.
+# Epic: IX.D.DAX.FWS2.IP (Germany 40 E25, dated — currently SEP-26 on demo).
+# Yahoo ^GDAXI stand-in (no reliable Yahoo FDAX continuous); path ≈ cash index,
+# costs use futures spread. Indicative only — no roll modelling.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo '^GDAXI' --epic IX.D.DAX.FWS2.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_long_bias.py --overlays ig-dax-fut
+#
+# Cost model: no overnight funding; live demo spread ~6 pts (~2.4 bps at ~25560).
+# Use 2.5 bps floor.
+
+trading:
+  exchange: ig
+  symbol: IX.D.DAX.FWS2.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "100000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 2.5
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

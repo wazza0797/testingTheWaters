@@ -46,13 +46,33 @@ class DataIngestService:
         latest_stored = self._repository.latest_timestamp(symbol, timeframe)
         cursor = max(since, latest_stored) if latest_stored is not None else since
 
+        # Page size is the smaller of our own preferred page size and the
+        # adapter's hard per-request cap (e.g. IG's nominal 500 vs Binance's
+        # 1000).
+        adapter_cap = getattr(self._exchange, "max_ohlcv_limit", _FETCH_LIMIT)
+        page_limit = min(_FETCH_LIMIT, adapter_cap)
+
         total_new = 0
         for _ in range(_MAX_PAGES):
-            bars = self._exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=_FETCH_LIMIT)
+            bars = self._exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=page_limit)
             new_bars = [
                 bar for bar in bars if latest_stored is None or bar.timestamp > latest_stored
             ]
             if not new_bars:
+                # The only reliable "caught up" signal: a page with zero new
+                # bars. We deliberately do NOT also stop on a "short" page
+                # (`len(bars) < page_limit`) — some venues' historical price
+                # APIs silently cap each response well below their documented
+                # per-request limit regardless of what's requested (e.g. IG's
+                # demo `/prices` endpoint has been observed returning exactly
+                # ~20 points per call no matter the `max`/date range asked
+                # for), so a "short" page there means "more small pages
+                # follow", not "no more history" — treating it as the latter
+                # silently truncated multi-page IG downloads to a single
+                # page. One extra page returning zero new bars (the real
+                # "caught up to now" case) is a cheap, always-correct price
+                # to pay for not silently truncating history on venues like
+                # that.
                 break
 
             self._repository.save_bars(symbol, timeframe, new_bars)
@@ -62,9 +82,6 @@ class DataIngestService:
             total_new += len(new_bars)
             latest_stored = new_bars[-1].timestamp
             cursor = new_bars[-1].timestamp
-
-            if len(bars) < _FETCH_LIMIT:
-                break  # short page: no more history available from the exchange
         else:
             raise MarketDataError(
                 f"Ingest for {symbol}@{timeframe} did not terminate after {_MAX_PAGES} pages "
