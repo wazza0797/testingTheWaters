@@ -1,0 +1,42 @@
+# IG Markets NZD/USD Mini CFD — pairs-research leg (AUDUSD/NZDUSD residual).
+# Epic: CS.D.NZDUSD.MINI.IP. Yahoo NZDUSD=X stand-in for OHLCV.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo 'NZDUSD=X' --epic CS.D.NZDUSD.MINI.IP --timeframe 1h
+#
+# Spread: NZD/USD typically ~1.5–2.5 pts in-session. At mid≈0.58 → ~2.6–4.3 bps;
+# use 3.5 bps as a conservative floor.
+
+trading:
+  exchange: ig
+  symbol: CS.D.NZDUSD.MINI.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "10000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 3.5
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

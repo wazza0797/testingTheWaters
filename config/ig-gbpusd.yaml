@@ -1,0 +1,42 @@
+# IG Markets GBP/USD Mini CFD — pairs-research leg (EURUSD/GBPUSD residual).
+# Epic: CS.D.GBPUSD.MINI.IP. Yahoo GBPUSD=X stand-in for OHLCV.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo 'GBPUSD=X' --epic CS.D.GBPUSD.MINI.IP --timeframe 1h
+#
+# Spread: GBP/USD typically ~1.0–1.8 pts in-session. At mid≈1.27 → ~0.8–1.4 bps;
+# use 1.5 bps as a conservative floor.
+
+trading:
+  exchange: ig
+  symbol: CS.D.GBPUSD.MINI.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "10000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.5
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30
