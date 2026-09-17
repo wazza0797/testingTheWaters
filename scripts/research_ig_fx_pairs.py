@@ -31,7 +31,6 @@ import csv
 import itertools
 import math
 from dataclasses import dataclass
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -105,12 +104,16 @@ def _parse_pair(name: str) -> PairSpec:
 
 def _closes(bars: list[Bar]) -> tuple[np.ndarray, np.ndarray]:
     """Return parallel float64 arrays of unix-ns timestamps and closes."""
-    ts = np.fromiter((int(b.timestamp.timestamp() * 1e9) for b in bars), dtype=np.int64, count=len(bars))
+    ts = np.fromiter(
+        (int(b.timestamp.timestamp() * 1e9) for b in bars), dtype=np.int64, count=len(bars)
+    )
     px = np.fromiter((float(b.close) for b in bars), dtype=np.float64, count=len(bars))
     return ts, px
 
 
-def _align(ts_a: np.ndarray, px_a: np.ndarray, ts_b: np.ndarray, px_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _align(
+    ts_a: np.ndarray, px_a: np.ndarray, ts_b: np.ndarray, px_b: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """Inner-join on timestamp; return aligned close series."""
     # Assume each series is sorted unique timestamps (parquet OHLCV is).
     idx_a = {int(t): i for i, t in enumerate(ts_a)}
@@ -257,9 +260,13 @@ def simulate(
                 trips += 1
                 if pnl > 0:
                     wins += 1
-            if target != 0 and position == 0:
-                entry_equity = equity[t]
-            elif target != 0 and position != 0 and target != position:
+            if (
+                target != 0
+                and position == 0
+                or target != 0
+                and position != 0
+                and target != position
+            ):
                 entry_equity = equity[t]
             position = target
 
@@ -381,11 +388,7 @@ def main() -> None:
             )
             series[(pair.name, tf)] = (aligned_a, aligned_b, pair)
 
-    jobs = [
-        (name_tf[0], name_tf[1], case, series[name_tf])
-        for name_tf in series
-        for case in cases
-    ]
+    jobs = [(name_tf[0], name_tf[1], case, series[name_tf]) for name_tf in series for case in cases]
     print(f"\njobs={len(jobs)} starting_cash={args.starting_cash:g}\n", flush=True)
 
     rows: list[dict[str, Any]] = []
