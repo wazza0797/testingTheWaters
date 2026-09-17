@@ -102,8 +102,6 @@ class TestAssumeFullLiquidityWhenNoVolume:
             volume_participation_rate=0.10, assume_full_liquidity_when_no_volume=True
         )
 
-        fillable = model.fillable_quantity(
-            bar_volume=Decimal("1000"), remaining_qty=Decimal("500")
-        )
+        fillable = model.fillable_quantity(bar_volume=Decimal("1000"), remaining_qty=Decimal("500"))
 
         assert fillable == Decimal("100")  # normal 10%-of-volume cap still applies

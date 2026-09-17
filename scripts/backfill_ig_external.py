@@ -155,18 +155,12 @@ def main() -> None:
     elif range_ is None and period1 is None:
         range_ = _DEFAULT_RANGE[timeframe]
 
-    label = (
-        f"period1={period1}&period2={period2}"
-        if period1 is not None
-        else f"range={range_}"
-    )
+    label = f"period1={period1}&period2={period2}" if period1 is not None else f"range={range_}"
     print(
         f"Fetching {args.yahoo} @ {timeframe} ({label}) -> "
         f"{_EXCHANGE}/{args.epic} (Yahoo stand-in for IG CFD — see docstring)..."
     )
-    result = _fetch_chart(
-        args.yahoo, timeframe, range_, period1=period1, period2=period2
-    )
+    result = _fetch_chart(args.yahoo, timeframe, range_, period1=period1, period2=period2)
     bars = _parse_bars(result, epic=args.epic, timeframe=timeframe)
     if not bars:
         print("No bars parsed — nothing saved.", file=sys.stderr)
