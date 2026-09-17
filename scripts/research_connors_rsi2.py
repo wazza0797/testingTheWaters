@@ -152,7 +152,7 @@ def simulate(
 
     def _do_enter(i: int, px: float) -> None:
         nonlocal cash, qty, entry_px, entry_i
-        if qty > 0 or px <= 0 or not (atr_a[i] == atr_a[i]) or atr_a[i] <= 0:
+        if qty > 0 or px <= 0 or atr_a[i] != atr_a[i] or atr_a[i] <= 0:
             return
         eq = _equity(px)
         risk_cash = eq * risk_pct
@@ -217,15 +217,11 @@ def simulate(
 
         if qty > 0:
             held = i - entry_i
-            if close_a[i] < sma200_a[i]:
-                want_exit = True
-            elif close_a[i] > sma5_a[i]:
-                want_exit = True
-            elif held >= time_stop_days:
+            if close_a[i] < sma200_a[i] or close_a[i] > sma5_a[i] or held >= time_stop_days:
                 want_exit = True
         elif in_bull and rsi_a[i] < rsi_threshold:
             prev = rsi_a[i - 1] if i > 0 else float("nan")
-            if not (prev == prev) or prev >= rsi_threshold:
+            if prev != prev or prev >= rsi_threshold:
                 want_enter = True
 
         if fill == "signal_close":
@@ -486,7 +482,7 @@ def main() -> None:
                 for r in rows
                 if r["period"] == "OOS"
             ],
-            *([ "Close vs next-open diagnostic:", *diag_lines] if diag_lines else []),
+            *(["Close vs next-open diagnostic:", *diag_lines] if diag_lines else []),
             f"csv={args.csv}",
         ]
     )

@@ -5,12 +5,12 @@ from decimal import Decimal
 
 import pytest
 
+from tests.unit.strategies.conformance import assert_strategy_conforms
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.position import Position
 from trading_platform.domain.models.signal import SignalType
 from trading_platform.strategies.context import DefaultStrategyContext
 from trading_platform.strategies.examples.connors_rsi2 import ConnorsRsi2Strategy
-from tests.unit.strategies.conformance import assert_strategy_conforms
 
 
 class _PosProvider:
