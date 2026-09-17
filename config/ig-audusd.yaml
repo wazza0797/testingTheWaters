@@ -1,0 +1,43 @@
+# IG Markets AUD/USD Mini CFD — commodity FX, often range-bound (MR research).
+# Epic: CS.D.AUDUSD.MINI.IP. Yahoo AUDUSD=X stand-in for OHLCV.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo 'AUDUSD=X' --epic CS.D.AUDUSD.MINI.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_mean_rev.py --overlays ig-audusd
+#
+# Spread: AUD/USD typically ~1.2–2.0 pts in-session. At mid≈0.72 → ~1.7–2.8 bps;
+# use 3.0 bps as a conservative floor.
+
+trading:
+  exchange: ig
+  symbol: CS.D.AUDUSD.MINI.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "10000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 3.0
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

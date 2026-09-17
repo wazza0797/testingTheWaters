@@ -1,0 +1,42 @@
+# IG Markets EUR/CHF Mini CFD — textbook FX mean-reversion pair.
+# Epic: CS.D.EURCHF.MINI.IP. Yahoo EURCHF=X stand-in for OHLCV.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo 'EURCHF=X' --epic CS.D.EURCHF.MINI.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_mean_rev.py --overlays ig-eurchf
+#
+# Spread: EUR/CHF typically ~1.5–2.5 pts. At mid≈0.94 → ~1.6–2.7 bps; use 2.5.
+
+trading:
+  exchange: ig
+  symbol: CS.D.EURCHF.MINI.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "10000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 2.5
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30
