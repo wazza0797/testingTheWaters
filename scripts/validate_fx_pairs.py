@@ -134,9 +134,7 @@ def _validate_one(candidate: Candidate, *, discord: bool) -> str:
     ts_b, px_b = _pairs._closes(bars_b)
     ts, aligned_a, aligned_b = _align_with_ts(ts_a, px_a, ts_b, px_b)
     if len(aligned_a) < _IS_BARS + _OOS_BARS:
-        raise SystemExit(
-            f"Need >= {_IS_BARS + _OOS_BARS} aligned bars; got {len(aligned_a)}"
-        )
+        raise SystemExit(f"Need >= {_IS_BARS + _OOS_BARS} aligned bars; got {len(aligned_a)}")
 
     span_days = (ts[-1] - ts[0]) / 1e9 / 86400.0
     print(
@@ -239,11 +237,7 @@ def main() -> None:
     parser.add_argument("--no-discord", action="store_true")
     args = parser.parse_args()
 
-    chosen = [
-        c
-        for c in _CANDIDATES
-        if args.only is None or c.pair == args.only
-    ]
+    chosen = [c for c in _CANDIDATES if args.only is None or c.pair == args.only]
     if not chosen:
         raise SystemExit("No candidates selected.")
 

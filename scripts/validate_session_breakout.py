@@ -136,7 +136,9 @@ def _ema(fast: int, slow: int) -> dict[str, Any]:
     }
 
 
-def _regime(playbook: dict[str, Any], *, when: dict[str, Any], min_regime_bars: int) -> dict[str, Any]:
+def _regime(
+    playbook: dict[str, Any], *, when: dict[str, Any], min_regime_bars: int
+) -> dict[str, Any]:
     return {
         "default": "flat",
         "min_regime_bars": min_regime_bars,
@@ -339,11 +341,7 @@ def _validate_one(candidate: Candidate, *, discord: bool) -> str:
     m = full_report.metrics
     bh = full_report.buy_and_hold_return_pct
     bh_s = f"bh={float(bh):+.2f}%" if bh is not None else "bh=n/a"
-    vs = (
-        f" vs_bh={float(m.total_return_pct) - float(bh):+.2f}%"
-        if bh is not None
-        else ""
-    )
+    vs = f" vs_bh={float(m.total_return_pct) - float(bh):+.2f}%" if bh is not None else ""
     summary_lines = [
         f"Validation done: session_breakout {candidate.key} {_SYMBOL}@{_TIMEFRAME}",
         f"label={candidate.label}",

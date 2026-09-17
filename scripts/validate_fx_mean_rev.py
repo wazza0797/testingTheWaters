@@ -294,11 +294,7 @@ def _validate_one(candidate: Candidate, *, discord: bool) -> str:
     m = full_report.metrics
     bh = full_report.buy_and_hold_return_pct
     bh_s = f"bh={float(bh):+.2f}%" if bh is not None else "bh=n/a"
-    vs = (
-        f" vs_bh={float(m.total_return_pct) - float(bh):+.2f}%"
-        if bh is not None
-        else ""
-    )
+    vs = f" vs_bh={float(m.total_return_pct) - float(bh):+.2f}%" if bh is not None else ""
     summary_lines = [
         f"Validation done: fx_mean_rev {candidate.key} {candidate.symbol}@{candidate.timeframe}",
         f"label={candidate.label}",

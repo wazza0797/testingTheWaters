@@ -377,9 +377,7 @@ def main() -> None:
             for case in cases:
                 jobs.append((overlay, timeframe, case, args.lookback, args.max_bars))
 
-    print(
-        f"grid={args.grid} jobs={len(jobs)} workers={args.workers} lookback={args.lookback}"
-    )
+    print(f"grid={args.grid} jobs={len(jobs)} workers={args.workers} lookback={args.lookback}")
     print(
         "Varies: Donchian period / EMA pair, ADX floor, ATR stops, min_regime_bars. "
         "Session gates always on. Funding still not modelled — flatten aims to avoid it."
