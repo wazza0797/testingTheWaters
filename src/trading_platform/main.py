@@ -36,6 +36,7 @@ from trading_platform.domain.models.order import OrderSide
 from trading_platform.exchanges.factory import build_exchange_adapter
 from trading_platform.market_data.gaps import find_gaps
 from trading_platform.market_data.timeframe import timeframe_to_timedelta
+from trading_platform.observability.server import create_health_app, create_metrics_app
 from trading_platform.utils.logging import configure_logging
 from trading_platform.utils.time import to_utc, utc_now
 
@@ -100,17 +101,40 @@ def _bootstrap(overlay: str | None = None) -> AppContainer:
 
 
 async def _run_observability_servers(container: AppContainer, host: str = "0.0.0.0") -> None:
-    fastapi_app = container.observability_app()
-    ports = {container.settings.metrics_port, container.settings.health_port}
+    """Serve `/health` and `/metrics` on separate ports when they differ.
+
+    Publishing the health port must not also expose unauthenticated `/metrics`
+    (compose publishes `:8080` for probes; Prometheus scrapes `:9090` on the
+    Docker network).
+    """
+    health_port = container.settings.health_port
+    metrics_port = container.settings.metrics_port
+    if health_port == metrics_port:
+        app = container.observability_app()
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=host, port=health_port, log_level="warning")
+        )
+        await server.serve()
+        return
+
+    health_app = create_health_app(container.health)
+    metrics_app = create_metrics_app(container.prometheus_collector)
     servers = [
-        uvicorn.Server(uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning"))
-        for port in sorted(ports)
+        uvicorn.Server(
+            uvicorn.Config(health_app, host=host, port=health_port, log_level="warning")
+        ),
+        uvicorn.Server(
+            uvicorn.Config(metrics_app, host=host, port=metrics_port, log_level="warning")
+        ),
     ]
     await asyncio.gather(*(server.serve() for server in servers))
 
 
 def _start_observability_sidecar(container: AppContainer) -> threading.Event:
     """Run system-monitor poller + `/health`/`/metrics` beside paper/demo loops.
+
+    Does **not** publish `Heartbeat` — paper/demo loops already emit those on
+    idle polls; duplicating them spammed Discord/Telegram (M9).
 
     Returns a stop event for the poller. HTTP servers are daemon threads and
     exit with the process (Docker SIGTERM / Ctrl+C). No-op when
@@ -122,20 +146,10 @@ def _start_observability_sidecar(container: AppContainer) -> threading.Event:
         return stop_event
 
     def _poller() -> None:
-        last_heartbeat = 0.0
         while not stop_event.is_set():
             container.system_monitor.poll_once()
             if container.config.observability.log_summary_enabled:
                 container.summary_logger.maybe_emit()
-            now = time.monotonic()
-            if now - last_heartbeat >= _HEARTBEAT_INTERVAL_SECONDS:
-                container.event_bus.publish(
-                    Heartbeat(
-                        mode="observability",
-                        uptime_seconds=container.health.uptime_seconds,
-                    )
-                )
-                last_heartbeat = now
             stop_event.wait(1.0)
 
     def _servers() -> None:

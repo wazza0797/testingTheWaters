@@ -26,13 +26,18 @@ def _bar(offset: int, symbol: str = "IX.D.SPTRD.DAILY.IP") -> Bar:
 
 class _Repo:
     def __init__(self, bars: list[Bar]) -> None:
-        self._bars = bars
+        self._bars = list(bars)
+        self.save_calls = 0
 
     def load_bars(self, symbol: str, timeframe: str, start=None, end=None):  # noqa: ANN001
         return iter(self._bars)
 
     def save_bars(self, symbol: str, timeframe: str, bars: list[Bar]) -> None:
-        return None
+        self.save_calls += 1
+        by_ts = {b.timestamp: b for b in self._bars}
+        for bar in bars:
+            by_ts[bar.timestamp] = bar
+        self._bars = sorted(by_ts.values(), key=lambda b: b.timestamp)
 
     def latest_timestamp(self, symbol: str, timeframe: str) -> datetime | None:
         return self._bars[-1].timestamp if self._bars else None
@@ -75,9 +80,12 @@ class TestLoadWarmupBars:
 
     def test_falls_back_to_venue_when_cache_short(self) -> None:
         adapter = _Adapter([_bar(i) for i in range(80)])
-        bars = load_warmup_bars(_Repo([_bar(0)]), adapter, "IX.D.SPTRD.DAILY.IP", "1d", min_bars=70)
+        repo = _Repo([_bar(0)])
+        bars = load_warmup_bars(repo, adapter, "IX.D.SPTRD.DAILY.IP", "1d", min_bars=70)
         assert len(bars) == 70
         assert adapter.fetch_calls == 1
+        assert repo.save_calls == 1
+        assert len(repo._bars) == 80
 
     def test_through_filters_resume_cursor(self) -> None:
         cached = [_bar(i) for i in range(10)]
@@ -90,4 +98,25 @@ class TestLoadWarmupBars:
             min_bars=3,
             through=through,
         )
-        assert [b.timestamp for b in bars] == [_BASE + timedelta(days=i) for i in range(5)]
+        assert len(bars) == 3
+        assert bars[-1].timestamp == through
+        assert all(b.timestamp <= through for b in bars)
+
+    def test_through_with_short_cache_fetches_and_persists(self) -> None:
+        """Resume cursor must not skip venue backfill when parquet is empty."""
+        through = _BASE + timedelta(days=60)
+        adapter = _Adapter([_bar(i) for i in range(80)])
+        repo = _Repo([])
+        bars = load_warmup_bars(
+            repo,
+            adapter,
+            "IX.D.SPTRD.DAILY.IP",
+            "1d",
+            min_bars=50,
+            through=through,
+        )
+        assert adapter.fetch_calls == 1
+        assert repo.save_calls == 1
+        assert len(bars) == 50
+        assert bars[-1].timestamp == through
+        assert all(b.timestamp <= through for b in bars)

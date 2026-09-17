@@ -33,8 +33,9 @@ services:
     volumes:
       - tp-data:/data
     ports:
-      - "8080:8080"
-      # App /metrics stays on container :9090 for Prometheus scrape only.
+      - "8080:8080"   # /health only (metrics live on container :9090)
+      # App /metrics stays on container :9090 for Prometheus scrape only —
+      # not published to the host.
     expose:
       - "9090"
     healthcheck:

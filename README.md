@@ -184,9 +184,9 @@ curl -sf http://localhost:8080/health
 #   Provisioned dashboard: Trading Platform — Observability
 ```
 
-`/health` and `/metrics` run as a sidecar inside the `demo`/`paper` process
-when `OBSERVABILITY_ENABLED=true`. App metrics stay on the Docker network
-(`trading-platform:9090`); Prometheus is published on host port **9091**.
+`/health` runs on the published host port (`:8080`). `/metrics` runs only on
+the Docker-network port (`trading-platform:9090`) that Prometheus scrapes —
+not on the health listener — so publishing `:8080` does not expose telemetry.
 
 ## Development Setup
 

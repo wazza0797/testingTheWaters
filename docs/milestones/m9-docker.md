@@ -24,11 +24,13 @@
   - `prometheus` — scrapes `trading-platform:9090/metrics`; UI on host `:9091`
   - `grafana` — profile `grafana`, datasource auto-provisioned
 - `docker/prometheus/prometheus.yml`, `docker/grafana/provisioning/…`
-- Paper + demo CLI start an observability **sidecar** (poller + `/health` +
-  `/metrics`) when `OBSERVABILITY_ENABLED=true`, so compose healthchecks work
-  without a separate `serve` process
-- Paper + demo **auto-fetch** instrument rules on cache miss (Docker volume
-  starts empty; no manual `download-data` required just to boot)
+- Paper + demo CLI start an observability **sidecar** (system monitor +
+  `/health` on `HEALTH_PORT` + `/metrics` on `METRICS_PORT`) when
+  `OBSERVABILITY_ENABLED=true`. Health and metrics are **separate** apps so
+  publishing `:8080` does not expose `/metrics`. Sidecar does not emit
+  `Heartbeat` (paper/demo loops already do).
+- Paper + demo **auto-fetch** instrument rules on cache miss; strategy warmup
+  persists venue OHLCV into parquet so redeploys keep SMA/ATR history
 - `.env.example` — `TP_OVERLAY` + optional host port / Grafana knobs
 
 ## How it works

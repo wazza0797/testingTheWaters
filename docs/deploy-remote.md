@@ -95,8 +95,10 @@ docker compose up -d
 ### Firewall
 
 - Allow **SSH** (22 or your custom port).
-- Prefer **not** exposing `8080` / `9091` publicly. Use Discord/Telegram for
-  alerts, and SSH tunnels when you need the UIs:
+- Prefer **not** exposing `8080` / `9091` publicly. `8080` is `/health` only;
+  `/metrics` is not on that port (Prometheus scrapes container `:9090` on the
+  Docker network). Use Discord/Telegram for alerts, and SSH tunnels when you
+  need the UIs:
 
 ```bash
 # on your laptop
