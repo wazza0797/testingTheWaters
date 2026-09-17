@@ -26,14 +26,18 @@ in risk/portfolio (`InstrumentRules.allows_short`)
 1. Create an IG **demo** account + API key (IG Labs).
 2. Set in `.env`: `ENV=demo`, `IG_DEMO_API_KEY`, `IG_DEMO_USERNAME`,
    `IG_DEMO_PASSWORD`, optional `IG_DEMO_ACCOUNT_ID`.
-3. In `config/demo.yaml`, switch the `trading:` block to IG (comment out Binance,
-   uncomment the IG example) and set `symbol` to an **epic** (e.g.
-   `CS.D.EURUSD.MINI.IP`), not `BASE/QUOTE`.
-4. Pipeclean first (venue-agnostic smoke — works for Binance demo too):
+3. Choose a config overlay:
+   - Edit `config/demo.yaml` (comment out Binance, uncomment IG), **or**
+   - Pass `--overlay` so research configs drive the sleeve without editing
+     `demo.yaml` (DemoConfig defaults apply when the overlay omits `demo:`).
+4. Pipeclean first (venue-agnostic smoke):
 
 ```bash
 uv run trading-platform demo-smoke
 # or: uv run trading-platform demo-smoke --symbol CS.D.EURUSD.MINI.IP
+# Connors US500 sleeve (cash CFD epic IFM — not DAILY/DFB):
+uv run trading-platform download-data --overlay ig-us500
+uv run trading-platform demo-smoke --overlay ig-us500
 # short open (IG / allows_short only): --side sell
 ```
 
@@ -48,7 +52,13 @@ IG_DEMO_INTEGRATION=1 IG_DEMO_EPIC=CS.D.GBPEUR.CFD.IP uv run pytest -m network t
 uv run pytest -m network tests/integration/test_ig_adapter_network.py -k "not Dealing and not DemoSmoke" -v
 ```
 
-6. Then run the full loop: `uv run trading-platform demo`
+6. Then run the full loop:
+
+```bash
+uv run trading-platform demo
+# Connors US500 (sparse daily signals; strategy warms from cache/IG history):
+uv run trading-platform demo --overlay ig-us500
+```
 
 ## API matrix (what we call vs Labs reference)
 

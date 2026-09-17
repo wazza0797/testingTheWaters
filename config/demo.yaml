@@ -1,6 +1,10 @@
 # Demo-trading overlay — merged over default.yaml when running
 # `trading-platform demo` (Milestone 8a). Orders go to the exchange sandbox
 # selected by `trading.exchange` (factory → adapter); not local FillSimulator.
+#
+# Research sleeves can skip editing this file:
+#   uv run trading-platform demo --overlay ig-us500
+#   uv run trading-platform demo-smoke --overlay ig-us500
 trading:
   exchange: binance
   symbol: BTC/USDT
@@ -15,8 +19,8 @@ trading:
 #   timeframe: 1h
 
 demo:
-  poll_interval_sec: 30          # closed-bar poll (same idea as paper)
-  order_poll_interval_sec: 5     # how often DemoBroker polls fetch_order
+  poll_interval_sec: 30          # closed-bar poll + heartbeat cadence
+  order_poll_interval_sec: 5     # reserved; demo loop uses poll_interval_sec
   state_file: "demo_state.json"  # relative to DATA_DIR
 
 # Position sizing still uses backtest risk knobs until demo-specific sizing lands.

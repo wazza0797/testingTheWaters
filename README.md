@@ -170,9 +170,23 @@ explicitly, or the process refuses to start (see
 
 ## Docker Deployment
 
-Containerized deployment lands in Milestone 9. The observability server
-(`/health`, `/metrics`) is designed from Milestone 0 to run identically
-in-container as it does locally.
+Milestone 9 — see [`docs/milestones/m9-docker.md`](docs/milestones/m9-docker.md).
+
+**Remote VPS (first deploy + keeping the server updated):**
+[`docs/deploy-remote.md`](docs/deploy-remote.md).
+
+```bash
+# .env: ENV=demo + IG_DEMO_* (or BINANCE_DEMO_*); TP_OVERLAY=ig-us500 by default
+docker compose up -d --build
+curl -sf http://localhost:8080/health
+# Prometheus UI: http://localhost:9091
+# Optional Grafana: docker compose --profile grafana up -d  → :3000
+#   Provisioned dashboard: Trading Platform — Observability
+```
+
+`/health` and `/metrics` run as a sidecar inside the `demo`/`paper` process
+when `OBSERVABILITY_ENABLED=true`. App metrics stay on the Docker network
+(`trading-platform:9090`); Prometheus is published on host port **9091**.
 
 ## Development Setup
 
@@ -201,4 +215,5 @@ tracked in the project plan and mirrored under
 | Milestone | Focus |
 |-----------|-------|
 | M8b | Mainnet live (double-gated; after demo soak) |
-| M9 | Docker / VPS deployment |
+
+Docker / VPS deployment is **M9** — see [`docs/milestones/m9-docker.md`](docs/milestones/m9-docker.md).

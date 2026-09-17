@@ -37,19 +37,38 @@ _TIMEFRAME_SECONDS = {
     "15m": 15 * 60,
     "1h": 60 * 60,
     "4h": 4 * 60 * 60,
+    "1d": 24 * 60 * 60,
 }
 _DEFAULT_RANGE = {
     "15m": "60d",
     "1h": "730d",
     "4h": "730d",
+    "1d": "max",
 }
 
 
-def _fetch_chart(yahoo: str, timeframe: str, range_: str) -> dict[str, Any]:
+def _fetch_chart(
+    yahoo: str,
+    timeframe: str,
+    range_: str | None = None,
+    *,
+    period1: int | None = None,
+    period2: int | None = None,
+) -> dict[str, Any]:
     url = _CHART_BASE + quote(yahoo, safe="^=.")
+    params: dict[str, str | int] = {"interval": timeframe}
+    # Yahoo's chart API quietly downsamples `range=max` + `1d` to ~monthly.
+    # Prefer explicit period1/period2 for daily history.
+    if period1 is not None and period2 is not None:
+        params["period1"] = period1
+        params["period2"] = period2
+    elif range_ is not None:
+        params["range"] = range_
+    else:
+        params["range"] = "1y"
     response = httpx.get(
         url,
-        params={"interval": timeframe, "range": range_},
+        params=params,
         headers=_HEADERS,
         timeout=60.0,
     )
@@ -109,15 +128,45 @@ def main() -> None:
     )
     parser.add_argument("--timeframe", choices=sorted(_TIMEFRAME_SECONDS), default="1h")
     parser.add_argument("--range", default=None, help=f"Yahoo range (defaults: {_DEFAULT_RANGE})")
+    parser.add_argument(
+        "--period1",
+        type=int,
+        default=None,
+        help="Unix seconds start (for 1d prefer this over range=max).",
+    )
+    parser.add_argument(
+        "--period2",
+        type=int,
+        default=None,
+        help="Unix seconds end (default: now when --period1 set or timeframe=1d).",
+    )
     args = parser.parse_args()
     timeframe: str = args.timeframe
-    range_: str = args.range or _DEFAULT_RANGE[timeframe]
+    range_: str | None = args.range
+    period1 = args.period1
+    period2 = args.period2
+    # Daily default: explicit epoch window (Yahoo downsamples range=max on 1d).
+    if timeframe == "1d" and period1 is None and (range_ is None or range_ == "max"):
+        period1 = 315532800  # 1980-01-01
+        period2 = period2 or int(datetime.now(tz=UTC).timestamp())
+        range_ = None
+    elif period1 is not None and period2 is None:
+        period2 = int(datetime.now(tz=UTC).timestamp())
+    elif range_ is None and period1 is None:
+        range_ = _DEFAULT_RANGE[timeframe]
 
+    label = (
+        f"period1={period1}&period2={period2}"
+        if period1 is not None
+        else f"range={range_}"
+    )
     print(
-        f"Fetching {args.yahoo} @ {timeframe} (range={range_}) -> "
+        f"Fetching {args.yahoo} @ {timeframe} ({label}) -> "
         f"{_EXCHANGE}/{args.epic} (Yahoo stand-in for IG CFD — see docstring)..."
     )
-    result = _fetch_chart(args.yahoo, timeframe, range_)
+    result = _fetch_chart(
+        args.yahoo, timeframe, range_, period1=period1, period2=period2
+    )
     bars = _parse_bars(result, epic=args.epic, timeframe=timeframe)
     if not bars:
         print("No bars parsed — nothing saved.", file=sys.stderr)
