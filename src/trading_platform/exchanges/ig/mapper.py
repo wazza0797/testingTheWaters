@@ -96,11 +96,13 @@ def _decimal_places(value: Decimal) -> int:
 def map_instrument_rules(symbol: str, payload: dict[str, Any]) -> InstrumentRules:
     dealing = payload.get("dealingRules") or {}
     min_deal = dealing.get("minDealSize") or {}
-    min_step = dealing.get("minStepDistance") or {}
     min_size = _to_decimal(min_deal.get("value", "1"), field="minDealSize.value")
-    step = _to_decimal(min_step.get("value", min_size), field="minStepDistance.value")
-    if step <= 0:
-        step = min_size if min_size > 0 else Decimal("1")
+    if min_size <= 0:
+        min_size = Decimal("1")
+    # Quantity increment: IG's API does not expose a dedicated size-step field.
+    # `minStepDistance` is a *price* stop distance in points — do NOT use it as
+    # qty step (it commonly dwarfs minDealSize, e.g. min=0.04 / stepDist=1.0).
+    step = min_size
     # CFDs quote in points; use a fine tick default when snapshot has no scale.
     tick = Decimal("0.0001")
     snapshot = payload.get("snapshot") or {}

@@ -1,0 +1,73 @@
+# IG Markets US 500 cash CFD — Connors RSI(2) short-term reversal sleeve.
+# Signal source for research: Yahoo ^GSPC daily (16:00 ET cash close). IG's
+# own daily candle boundary differs — treat live indicators as approximate.
+#
+# Epic note: IX.D.SPTRD.DAILY.IP is a DFB/spread-bet style market (expiry=DFB).
+# CFD demo accounts reject OTC opens on it with INSTRUMENT_NOT_VALID.
+# Use the cash CFD epics instead:
+#   IX.D.SPTRD.IFM.IP  — US 500 Cash ($50), min ~0.04  ← default (demo-friendly)
+#   IX.D.SPTRD.IFD.IP  — US 500 Cash ($250), min 1.0
+#   IX.D.SPTRD.IFS.IP  — US 500 Cash (£1), min 1.0
+#
+# Backtest:
+#   uv run python scripts/backfill_ig_external.py --yahoo '^GSPC' \
+#       --epic IX.D.SPTRD.IFM.IP --timeframe 1d
+#   uv run trading-platform backtest --overlay ig-us500
+#
+# Demo (ENV=demo + IG_DEMO_* in .env) — order/sizing mechanics, not P&L proof.
+# Daily signals are sparse; demo fills are optimistic vs live CFD reality.
+#
+#   uv run trading-platform download-data --overlay ig-us500 --days 400
+#   uv run trading-platform demo-smoke --overlay ig-us500
+#   uv run trading-platform demo --overlay ig-us500
+#
+# Costs: ~1.0 bps spread floor. Overnight financing + dividends are NOT
+# modelled in the engine yet (research used ~1.7–2.4 bps/day financing).
+# Fills use next-bar open (latency_bars=1 + use_next_bar_open).
+
+trading:
+  exchange: ig
+  symbol: IX.D.SPTRD.IFM.IP
+  timeframe: 1d
+
+demo:
+  poll_interval_sec: 30          # bar poll + heartbeat cadence (Discord/log)
+  order_poll_interval_sec: 5     # reserved; loop currently uses poll_interval_sec
+  state_file: "demo_state_ig_us500.json"
+
+backtest:
+  starting_cash: "50000"
+  # Fallback only — Connors BUY signals carry atr_risk sizing in metadata.
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.0
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 20
+  min_bars: 250
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.connors_rsi2:ConnorsRsi2Strategy"
+  params:
+    rsi_period: 2
+    rsi_threshold: 10.0
+    sma_regime_period: 200
+    sma_exit_period: 5
+    time_stop_bars: 10
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_pct: 0.01

@@ -36,10 +36,11 @@ from trading_platform.domain.models.order import OrderSide
 from trading_platform.exchanges.factory import build_exchange_adapter
 from trading_platform.market_data.gaps import find_gaps
 from trading_platform.market_data.timeframe import timeframe_to_timedelta
+from trading_platform.observability.server import create_health_app, create_metrics_app
 from trading_platform.utils.logging import configure_logging
 from trading_platform.utils.time import to_utc, utc_now
 
-_HEARTBEAT_INTERVAL_SECONDS = 10.0
+_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 app = typer.Typer(
     name="trading-platform",
@@ -100,13 +101,70 @@ def _bootstrap(overlay: str | None = None) -> AppContainer:
 
 
 async def _run_observability_servers(container: AppContainer, host: str = "0.0.0.0") -> None:
-    fastapi_app = container.observability_app()
-    ports = {container.settings.metrics_port, container.settings.health_port}
+    """Serve `/health` and `/metrics` on separate ports when they differ.
+
+    Publishing the health port must not also expose unauthenticated `/metrics`
+    (compose publishes `:8080` for probes; Prometheus scrapes `:9090` on the
+    Docker network).
+    """
+    health_port = container.settings.health_port
+    metrics_port = container.settings.metrics_port
+    if health_port == metrics_port:
+        app = container.observability_app()
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=host, port=health_port, log_level="warning")
+        )
+        await server.serve()
+        return
+
+    health_app = create_health_app(container.health)
+    metrics_app = create_metrics_app(container.prometheus_collector)
     servers = [
-        uvicorn.Server(uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning"))
-        for port in sorted(ports)
+        uvicorn.Server(
+            uvicorn.Config(health_app, host=host, port=health_port, log_level="warning")
+        ),
+        uvicorn.Server(
+            uvicorn.Config(metrics_app, host=host, port=metrics_port, log_level="warning")
+        ),
     ]
     await asyncio.gather(*(server.serve() for server in servers))
+
+
+def _start_observability_sidecar(container: AppContainer) -> threading.Event:
+    """Run system-monitor poller + `/health`/`/metrics` beside paper/demo loops.
+
+    Does **not** publish `Heartbeat` — paper/demo loops already emit those on
+    idle polls; duplicating them spammed Discord/Telegram (M9).
+
+    Returns a stop event for the poller. HTTP servers are daemon threads and
+    exit with the process (Docker SIGTERM / Ctrl+C). No-op when
+    `OBSERVABILITY_ENABLED=false`.
+    """
+    stop_event = threading.Event()
+    if not container.settings.observability_enabled:
+        stop_event.set()
+        return stop_event
+
+    def _poller() -> None:
+        while not stop_event.is_set():
+            container.system_monitor.poll_once()
+            if container.config.observability.log_summary_enabled:
+                container.summary_logger.maybe_emit()
+            stop_event.wait(1.0)
+
+    def _servers() -> None:
+        logger.info(
+            "observability_sidecar_starting",
+            extra={
+                "metrics_port": container.settings.metrics_port,
+                "health_port": container.settings.health_port,
+            },
+        )
+        asyncio.run(_run_observability_servers(container))
+
+    threading.Thread(target=_poller, name="observability-poller", daemon=True).start()
+    threading.Thread(target=_servers, name="observability-http", daemon=True).start()
+    return stop_event
 
 
 @app.command()
@@ -174,9 +232,15 @@ def download_data(
         None, "--timeframe", help="e.g. 1h (default: config trading.timeframe)"
     ),
     days: int = typer.Option(365, "--days", help="Days of history to backfill from today."),
+    overlay: str | None = typer.Option(
+        None,
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (e.g. 'ig-gbpeur' for a "
+        "non-default exchange/symbol/timeframe). Omit to use config/default.yaml as-is.",
+    ),
 ) -> None:
     """Download historical OHLCV bars and cache instrument rules (Milestone 1)."""
-    container = _bootstrap()
+    container = _bootstrap(overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
@@ -409,6 +473,13 @@ def backtest(
         "--report",
         help="Optional machine-readable output: 'json' prints PerformanceReport JSON after the summary.",
     ),
+    overlay: str = typer.Option(
+        "backtest",
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (default: 'backtest'). Use a "
+        "research overlay (e.g. 'ig-gbpeur') that itself carries the trading/backtest/"
+        "strategy blocks for a non-default exchange/symbol/timeframe.",
+    ),
 ) -> None:
     """Replay cached historical bars through strategy -> risk -> execution
     with realistic simulated fills, and print performance analytics
@@ -424,7 +495,7 @@ def backtest(
         typer.echo(f"Unsupported --report value '{report}' (use 'json').", err=True)
         raise typer.Exit(code=1)
 
-    container = _bootstrap(overlay="backtest")
+    container = _bootstrap(overlay=overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
@@ -538,6 +609,13 @@ def walk_forward(
     end: str | None = typer.Option(
         None, "--end", help="ISO date/datetime to end at, exclusive (default: latest cached bar)."
     ),
+    overlay: str = typer.Option(
+        "backtest",
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (default: 'backtest'). Use a "
+        "research overlay (e.g. 'ig-gbpeur') that itself carries the trading/backtest/"
+        "strategy blocks for a non-default exchange/symbol/timeframe.",
+    ),
 ) -> None:
     """Run rolling walk-forward optimization (Milestone 4.5 Phase C).
 
@@ -548,7 +626,7 @@ def walk_forward(
     Configure windows / param_grid / objective under
     `validation.walk_forward` in config/backtest.yaml.
     """
-    container = _bootstrap(overlay="backtest")
+    container = _bootstrap(overlay=overlay)
     resolved_symbol = symbol or container.config.trading.symbol
     resolved_timeframe = timeframe or container.config.trading.timeframe
     exchange_name = container.exchange_adapter.exchange_name
@@ -656,11 +734,11 @@ def paper(
         rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
         if rules is None:
             typer.echo(
-                f"No cached instrument rules for {resolved_symbol} on {exchange_name}. "
-                "Run 'trading-platform download-data' first (rules are cached locally).",
-                err=True,
+                f"No cached instrument rules for {resolved_symbol} on {exchange_name}; "
+                "fetching from venue..."
             )
-            raise typer.Exit(code=1)
+            rules = container.exchange_adapter.fetch_instrument_rules(resolved_symbol)
+            container.instrument_rules_cache.save(rules)
 
         session = build_paper_session(
             container,
@@ -676,10 +754,17 @@ def paper(
         )
         if portfolio.last_bar_timestamp is not None:
             typer.echo(f"Resuming after bar {portfolio.last_bar_timestamp.isoformat()}")
+        obs_stop = _start_observability_sidecar(container)
+        if container.settings.observability_enabled:
+            typer.echo(
+                f"Observability: /health :{container.settings.health_port}, "
+                f"/metrics :{container.settings.metrics_port}"
+            )
         typer.echo("Polling for closed candles (Ctrl+C to stop)...")
         try:
             bars = session.loop.run()
         finally:
+            obs_stop.set()
             session.teardown()
 
         typer.echo(
@@ -694,23 +779,30 @@ def paper(
 @app.command()
 def demo(
     symbol: str | None = typer.Option(
-        None, "--symbol", help="e.g. BTC/USDT (default: config trading.symbol)"
+        None, "--symbol", help="e.g. BTC/USDT or IG epic (default: config trading.symbol)"
     ),
     timeframe: str | None = typer.Option(
-        None, "--timeframe", help="e.g. 1h (default: config trading.timeframe)"
+        None, "--timeframe", help="e.g. 1h, 1d (default: config trading.timeframe)"
+    ),
+    overlay: str = typer.Option(
+        "demo",
+        "--overlay",
+        help="Named config overlay to merge over default.yaml (default: 'demo'). "
+        "Use a research overlay (e.g. 'ig-us500') that carries trading/strategy "
+        "for that sleeve; DemoConfig defaults apply when the overlay omits demo:.",
     ),
 ) -> None:
     """Run exchange demo/practice trading (Milestone 8a).
 
-    Requires ENV=demo and venue demo API keys (e.g. BINANCE_DEMO_API_KEY /
-    BINANCE_DEMO_API_SECRET). Cash and positions are read from the exchange
-    account — not a local starting_cash. Orders go to the sandbox selected by
-    trading.exchange. Press Ctrl+C to stop.
+    Requires ENV=demo and venue demo API keys (BINANCE_DEMO_* or IG_DEMO_*).
+    Cash and positions are read from the exchange account — not a local
+    starting_cash. Orders go to the sandbox selected by trading.exchange.
+    Press Ctrl+C to stop.
     """
-    container = _bootstrap(overlay="demo")
+    container = _bootstrap(overlay=overlay)
     if container.settings.environment != Environment.DEMO:
         typer.echo(
-            "demo requires ENV=demo in .env (and BINANCE_DEMO_* keys for Binance).",
+            "demo requires ENV=demo in .env (BINANCE_DEMO_* or IG_DEMO_* keys).",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -726,11 +818,13 @@ def demo(
         rules = container.instrument_rules_cache.load(exchange_name, resolved_symbol)
         if rules is None:
             typer.echo(
-                f"No cached instrument rules for {resolved_symbol} on {exchange_name}. "
-                "Run 'trading-platform download-data' first (rules are cached locally).",
-                err=True,
+                f"No cached instrument rules for {resolved_symbol} on {exchange_name}; "
+                "fetching from venue..."
             )
-            raise typer.Exit(code=1)
+            rules = build_exchange_adapter(
+                exchange_name, Environment.DEMO, container.settings
+            ).fetch_instrument_rules(resolved_symbol)
+            container.instrument_rules_cache.save(rules)
 
         session = build_demo_session(
             container,
@@ -748,10 +842,17 @@ def demo(
         )
         if portfolio.last_bar_timestamp is not None:
             typer.echo(f"Resuming bar cursor after {portfolio.last_bar_timestamp.isoformat()}")
+        obs_stop = _start_observability_sidecar(container)
+        if container.settings.observability_enabled:
+            typer.echo(
+                f"Observability: /health :{container.settings.health_port}, "
+                f"/metrics :{container.settings.metrics_port}"
+            )
         typer.echo("Polling fills + closed candles (Ctrl+C to stop)...")
         try:
             bars = session.loop.run()
         finally:
+            obs_stop.set()
             session.teardown()
 
         typer.echo(
@@ -783,10 +884,16 @@ def demo_smoke(
     poll_interval_sec: float = typer.Option(
         1.0, "--poll-interval-sec", help="Seconds between fetch_order polls."
     ),
+    overlay: str = typer.Option(
+        "demo",
+        "--overlay",
+        help="Named config overlay (default: 'demo'). Use 'ig-us500' to pipeclean "
+        "the Connors US500 epic without editing demo.yaml.",
+    ),
 ) -> None:
     """Pipeclean the configured demo venue: min-size open, poll, then close.
 
-    Requires ENV=demo. Uses trading.exchange from config/demo.yaml (Binance,
+    Requires ENV=demo. Uses trading.exchange from the chosen overlay (Binance,
     IG, …). Places a market order at instrument min_qty, waits for a fill,
     then closes unless --no-close. Refuses to run if a position already exists
     on the symbol.
@@ -800,7 +907,7 @@ def demo_smoke(
         )
         raise typer.Exit(code=1)
 
-    config = load_config(overlay="demo")
+    config = load_config(overlay=overlay)
     resolved_symbol = symbol or config.trading.symbol
     exchange_name = config.trading.exchange
 

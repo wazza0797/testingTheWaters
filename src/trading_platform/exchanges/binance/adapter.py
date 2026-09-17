@@ -108,6 +108,10 @@ class BinanceAdapter:
     def exchange_name(self) -> str:
         return EXCHANGE_NAME
 
+    @property
+    def max_ohlcv_limit(self) -> int:
+        return _MAX_OHLCV_LIMIT
+
     def _ensure_markets_loaded(self) -> None:
         if not self._markets_loaded:
             self._exchange.load_markets()

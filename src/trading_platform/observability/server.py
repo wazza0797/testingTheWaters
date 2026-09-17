@@ -1,3 +1,9 @@
+"""HTTP surfaces for process health and Prometheus metrics.
+
+Health and metrics are separate apps so operators can publish `/health` on a
+host port without also exposing unauthenticated `/metrics` (M9).
+"""
+
 from __future__ import annotations
 
 import time
@@ -27,12 +33,30 @@ class HealthStatus:
         return {"status": "ok", "uptime_seconds": round(self.uptime_seconds, 3)}
 
 
-def create_app(metrics: PrometheusMetricsCollector, health: HealthStatus) -> FastAPI:
-    """Build the observability FastAPI app exposing `GET /health` and `GET /metrics`.
+def create_health_app(health: HealthStatus) -> FastAPI:
+    """`GET /health` only — safe to publish on a host port for probes."""
+    app = FastAPI(title="trading-platform health", docs_url=None, redoc_url=None)
 
-    This app runs alongside the trading loop (via uvicorn in a background
-    thread/process) — it is not part of the Typer CLI surface itself.
-    """
+    @app.get("/health")
+    def get_health() -> dict[str, object]:
+        return health.as_dict()
+
+    return app
+
+
+def create_metrics_app(metrics: PrometheusMetricsCollector) -> FastAPI:
+    """`GET /metrics` only — keep on the Docker network / localhost by default."""
+    app = FastAPI(title="trading-platform metrics", docs_url=None, redoc_url=None)
+
+    @app.get("/metrics")
+    def get_metrics() -> Response:
+        return Response(content=metrics.render_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    return app
+
+
+def create_app(metrics: PrometheusMetricsCollector, health: HealthStatus) -> FastAPI:
+    """Combined app (both routes) for tests and same-port local debugging."""
     app = FastAPI(title="trading-platform observability", docs_url=None, redoc_url=None)
 
     @app.get("/health")

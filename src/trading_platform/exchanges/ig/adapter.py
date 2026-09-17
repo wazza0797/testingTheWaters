@@ -118,6 +118,10 @@ class IgAdapter:
     def exchange_name(self) -> str:
         return EXCHANGE_NAME
 
+    @property
+    def max_ohlcv_limit(self) -> int:
+        return _MAX_PRICE_POINTS
+
     @_ig_retry
     def fetch_ohlcv(
         self,

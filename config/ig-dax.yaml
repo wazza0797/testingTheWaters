@@ -1,0 +1,44 @@
+# IG Markets Germany 40 (DAX) cash CFD research overlay.
+# Yahoo ^GDAXI stand-in for OHLCV (IG demo /prices is shallow) — indicative only.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo '^GDAXI' --epic IX.D.DAX.DAILY.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_sweep.py --overlays ig-dax
+#
+# Costs: IG Germany 40 in-hours spread typically ~1 point. At ~24000 that is
+# ~0.4 bps; use 0.8 bps as a blended floor. Overnight funding not modelled yet.
+
+trading:
+  exchange: ig
+  symbol: IX.D.DAX.DAILY.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "100000"   # DAX ~25k pts; $10k cash rounds qty to 0 at step=1
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 0.8
+  # At ~25500, 0.8 bps ≈ 2 pts blended (in-hours often ~1 pt).
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

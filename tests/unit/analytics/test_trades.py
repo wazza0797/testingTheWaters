@@ -103,3 +103,117 @@ class TestReconstructRoundTrips:
         fills = (_fill(OrderSide.SELL, Decimal("1"), Decimal("100")),)
 
         assert reconstruct_round_trips(fills) == ()
+
+    def test_sell_while_flat_opens_short_no_trip_yet(self) -> None:
+        # Opening a short (CFD/FX venue, allows_short=True) never emits a
+        # trip on its own — only covering it does.
+        fills = (_fill(OrderSide.SELL, Decimal("1"), Decimal("100")),)
+
+        assert reconstruct_round_trips(fills) == ()
+
+    def test_short_open_then_cover_pnl(self) -> None:
+        # Short 1 @ 110 fee 1 → amortized entry proceeds 109; cover @ 100 fee 1
+        # → pnl = 109 - (100 + 1) = 8
+        fills = (
+            _fill(OrderSide.SELL, Decimal("1"), Decimal("110"), fee=Decimal("1")),
+            _fill(
+                OrderSide.BUY,
+                Decimal("1"),
+                Decimal("100"),
+                fee=Decimal("1"),
+                timestamp=UTC_TS + timedelta(hours=1),
+            ),
+        )
+
+        trips = reconstruct_round_trips(fills)
+
+        assert len(trips) == 1
+        assert trips[0].side == OrderSide.SELL
+        assert trips[0].is_short is True
+        assert trips[0].is_long is False
+        assert trips[0].pnl == Decimal("8")
+        assert trips[0].fees == Decimal("2")
+        assert trips[0].is_partial is False
+        assert trips[0].is_winner is True
+
+    def test_short_loses_when_price_rises(self) -> None:
+        # Short 1 @ 100, cover @ 110 → pnl = 100 - 110 = -10
+        fills = (
+            _fill(OrderSide.SELL, Decimal("1"), Decimal("100")),
+            _fill(
+                OrderSide.BUY,
+                Decimal("1"),
+                Decimal("110"),
+                timestamp=UTC_TS + timedelta(hours=1),
+            ),
+        )
+
+        trips = reconstruct_round_trips(fills)
+
+        assert len(trips) == 1
+        assert trips[0].pnl == Decimal("-10")
+        assert trips[0].is_winner is False
+
+    def test_partial_cover_splits_short_pnl(self) -> None:
+        fills = (
+            _fill(OrderSide.SELL, Decimal("2"), Decimal("100"), fee=Decimal("2")),
+            _fill(
+                OrderSide.BUY,
+                Decimal("1"),
+                Decimal("90"),
+                fee=Decimal("1"),
+                timestamp=UTC_TS + timedelta(hours=1),
+            ),
+        )
+
+        trips = reconstruct_round_trips(fills)
+
+        assert len(trips) == 1
+        assert trips[0].quantity == Decimal("1")
+        assert trips[0].is_partial is True
+        # entry amortized: (200-2)/2 = 99; cover cost = 90 + 1 = 91
+        # pnl = 99 - 91 = 8
+        assert trips[0].pnl == Decimal("8")
+
+    def test_mixed_long_then_short_sequential_round_trips(self) -> None:
+        t1, t2, t3, t4 = (UTC_TS + timedelta(hours=i) for i in range(4))
+        fills = (
+            _fill(OrderSide.BUY, Decimal("1"), Decimal("100"), timestamp=t1),
+            _fill(OrderSide.SELL, Decimal("1"), Decimal("110"), timestamp=t2),
+            _fill(OrderSide.SELL, Decimal("1"), Decimal("110"), timestamp=t3),
+            _fill(OrderSide.BUY, Decimal("1"), Decimal("100"), timestamp=t4),
+        )
+
+        trips = reconstruct_round_trips(fills)
+
+        assert len(trips) == 2
+        assert trips[0].is_long is True
+        assert trips[0].pnl == Decimal("10")
+        assert trips[1].is_short is True
+        assert trips[1].pnl == Decimal("10")
+
+    def test_buy_while_short_covers_not_extends(self) -> None:
+        # Same side extends a lot; opposite side reduces/closes it — a BUY
+        # while short must cover, not silently open a second long lot.
+        fills = (
+            _fill(OrderSide.SELL, Decimal("1"), Decimal("100")),
+            _fill(
+                OrderSide.SELL,
+                Decimal("1"),
+                Decimal("100"),
+                timestamp=UTC_TS + timedelta(hours=1),
+            ),  # pyramids the short to qty=2
+            _fill(
+                OrderSide.BUY,
+                Decimal("2"),
+                Decimal("90"),
+                timestamp=UTC_TS + timedelta(hours=2),
+            ),  # covers the full short
+        )
+
+        trips = reconstruct_round_trips(fills)
+
+        assert len(trips) == 1
+        assert trips[0].quantity == Decimal("2")
+        assert trips[0].is_partial is False
+        assert trips[0].pnl == Decimal("20")  # (100-90)*2

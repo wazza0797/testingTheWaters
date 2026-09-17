@@ -1,0 +1,92 @@
+# Milestone 9 — Docker / VPS deployment
+#
+# Runs the Connors US500 IG demo soak by default, with /health + /metrics and a
+# Prometheus sidecar. Secrets come from `.env` (never baked into the image).
+#
+#   cp .env.example .env   # then set ENV=demo + IG_DEMO_*
+#   docker compose up -d --build
+#   curl -sf http://localhost:8080/health
+#   open http://localhost:9091          # Prometheus UI
+#
+# Override the sleeve: TP_OVERLAY=demo docker compose up -d
+# Optional Grafana:     docker compose --profile grafana up -d
+#   → http://localhost:3000 (admin/admin) — provisioned "Trading Platform —
+#     Observability" dashboard with all app metrics.
+
+services:
+  trading-platform:
+    build: .
+    image: trading-platform:local
+    container_name: trading-platform
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data
+      # Pin in-container listen ports so host mappings stay stable even if
+      # `.env` overrides HEALTH_PORT / METRICS_PORT for local non-Docker runs.
+      HEALTH_PORT: "8080"
+      METRICS_PORT: "9090"
+      TP_OVERLAY: ${TP_OVERLAY:-ig-us500}
+    command: ["trading-platform", "demo", "--overlay", "${TP_OVERLAY:-ig-us500}"]
+    volumes:
+      - tp-data:/data
+    ports:
+      - "8080:8080"   # /health only (metrics live on container :9090)
+      # App /metrics stays on container :9090 for Prometheus scrape only —
+      # not published to the host.
+    expose:
+      - "9090"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: trading-platform-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    depends_on:
+      trading-platform:
+        condition: service_healthy
+
+  grafana:
+    profiles: ["grafana"]
+    image: grafana/grafana:11.2.0
+    container_name: trading-platform-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/json/trading-platform-overview.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  tp-data:
+  prometheus-data:
+  grafana-data:

@@ -5,6 +5,7 @@ from trading_platform.notifications.console import ConsoleNotifier
 from trading_platform.notifications.discord import DiscordNotifier
 from trading_platform.notifications.factory import build_notifier
 from trading_platform.notifications.handler import NotificationHandler, format_event
+from trading_platform.notifications.research import notify_demo_research
 from trading_platform.notifications.telegram import TelegramNotifier
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "TelegramNotifier",
     "build_notifier",
     "format_event",
+    "notify_demo_research",
 ]

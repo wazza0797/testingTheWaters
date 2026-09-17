@@ -2083,6 +2083,7 @@ source = { editable = "." }
 dependencies = [
     { name = "ccxt" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pandas" },
     { name = "prometheus-client" },
     { name = "psutil" },
@@ -2097,7 +2098,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pytest" },
@@ -2112,6 +2112,7 @@ dev = [
 requires-dist = [
     { name = "ccxt", specifier = ">=4.3" },
     { name = "fastapi", specifier = ">=0.111" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "psutil", specifier = ">=6.0" },
@@ -2126,7 +2127,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.10" },
     { name = "pandas-stubs", specifier = ">=2.2" },
     { name = "pytest", specifier = ">=8.2" },

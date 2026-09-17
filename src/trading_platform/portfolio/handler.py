@@ -47,6 +47,10 @@ class PortfolioHandler:
     def last_bar_timestamp(self) -> datetime | None:
         return self._last_bar_timestamp
 
+    def set_bar_cursor(self, timestamp: datetime | None) -> None:
+        """Advance the closed-bar cursor without applying marks (session warmup)."""
+        self._last_bar_timestamp = timestamp
+
     @property
     def cash(self) -> Decimal:
         return self._book.cash

@@ -25,6 +25,12 @@ from trading_platform.strategies.rules.parser import (
     parse_condition,
     validate_condition_indicators,
 )
+from trading_platform.strategies.rules.playbook import (
+    LongShortPlaybook,
+    PlaybookEdgeState,
+    evaluate_playbook_signals,
+    parse_playbook,
+)
 from trading_platform.strategies.rules.values import CloseRef, ConstantRef, IndicatorRef, ValueSpec
 
 __all__ = [
@@ -38,10 +44,14 @@ __all__ = [
     "ConstantRef",
     "Cross",
     "IndicatorRef",
+    "LongShortPlaybook",
     "NotOf",
+    "PlaybookEdgeState",
     "TriBool",
     "ValueSpec",
     "evaluate",
+    "evaluate_playbook_signals",
     "parse_condition",
+    "parse_playbook",
     "validate_condition_indicators",
 ]

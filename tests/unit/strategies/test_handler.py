@@ -174,8 +174,33 @@ class TestStrategyHandler:
 
         assert strategy.stop_calls == 1
 
+    def test_warmup_feeds_bars_without_publishing_signals(self, make_bar, fake_event_bus) -> None:
+        strategy = RecordingStrategy()
+        strategy.next_signals = [_signal()]
+        handler = _handler(strategy, fake_event_bus)
+        bars = [make_bar(timestamp=datetime(2024, 1, i, tzinfo=UTC)) for i in range(1, 4)]
 
-class TestStrategyIdentityStamping:
+        applied = handler.warmup(bars)
+
+        assert applied == 3
+        assert strategy.start_calls == 1
+        assert len(strategy.on_bar_calls) == 3
+        assert fake_event_bus.published == []
+
+    def test_warmup_then_live_bar_still_publishes(self, make_bar, fake_event_bus) -> None:
+        strategy = RecordingStrategy()
+        handler = _handler(strategy, fake_event_bus)
+        handler.warmup([make_bar(timestamp=datetime(2024, 1, 1, tzinfo=UTC))])
+        strategy.next_signals = [_signal()]
+
+        handler.handle(
+            BarClosed(bar=make_bar(timestamp=datetime(2024, 1, 2, tzinfo=UTC)), mode="demo")
+        )
+
+        assert strategy.start_calls == 1
+        assert len(fake_event_bus.published) == 1
+        assert isinstance(fake_event_bus.published[0], SignalGenerated)
+
     """`StrategyHandler` is the single place identity gets assigned — every
     published signal carries the handler's own `name`, regardless of what
     the wrapped strategy set on `Signal.strategy_name`. This is what makes

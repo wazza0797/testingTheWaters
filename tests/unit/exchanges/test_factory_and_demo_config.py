@@ -41,6 +41,15 @@ class TestDemoConfigOverlay:
         assert config.demo.state_file == "demo_state.json"
         assert config.trading.exchange == "binance"
 
+    def test_ig_us500_overlay_carries_demo_and_connors(self) -> None:
+        config = load_config(overlay="ig-us500")
+        assert config.trading.exchange == "ig"
+        assert config.trading.symbol == "IX.D.SPTRD.IFM.IP"
+        assert config.trading.timeframe == "1d"
+        assert config.demo.state_file == "demo_state_ig_us500.json"
+        assert config.strategy.path is not None
+        assert "connors_rsi2" in config.strategy.path
+
 
 class TestEnvironmentDemo:
     def test_demo_env_parses(self) -> None:

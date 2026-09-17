@@ -1,0 +1,55 @@
+# IG Markets FTSE 100 cash CFD research overlay.
+# Yahoo ^FTSE stand-in for OHLCV (IG demo /prices is ~20 bars) — indicative only.
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo '^FTSE' --epic IX.D.FTSE.DAILY.IP --timeframe 1h
+#   uv run python scripts/research_ig_index_recipes.py
+#   uv run trading-platform backtest --overlay ig-ftse
+#
+# Costs (IG indices CFD product details): FTSE 100 in-hours spread ~1 point
+# (08:00–16:30 GMT), wider out-of-hours (2–4). At ~8200 that is ~1.2 bps
+# full spread in-hours. We use ~1.5 bps as a blended floor. Overnight
+# funding (interest + dividend adjustments) is not modelled yet.
+
+trading:
+  exchange: ig
+  symbol: IX.D.FTSE.DAILY.IP
+  timeframe: 1h
+
+backtest:
+  starting_cash: "50000"    # FTSE ~10.7k; $10k cash often rounds qty to 0 at step=1
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.2             # ≈ 1 FTSE point as bps-of-mid at ~10700
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  # Yahoo ^FTSE chart reports volume=0 — same wedge as FX without this flag.
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+  walk_forward:
+    is_bars: 1500                 # ~90 days of 1h bars
+    oos_bars: 500                 # ~30 days OOS
+    step_bars: 500
+    objective: sharpe_daily
+    param_grid:
+      min_regime_bars: [4, 6, 12]
+
+analytics:
+  min_round_trips: 30
+  min_bars: 500
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+# Placeholder until research promotes a regime-gated recipe.
+strategy:
+  path: "trading_platform.strategies.examples.sma_crossover:SmaCrossoverStrategy"
+  params:
+    fast_period: 10
+    slow_period: 30

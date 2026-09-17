@@ -523,7 +523,8 @@ Prometheus server scrapes `/metrics` (Milestone 9).
   uptime). Both served by [`observability/server.py`](../src/trading_platform/observability/server.py),
   on `METRICS_PORT`/`HEALTH_PORT` (default 9090/8080).
 - **M6+:** `/health` extended with last bar timestamp, feed status, metrics freshness.
-- **M9:** Docker Compose publishes both ports; optional Prometheus sidecar.
+- **M9:** Docker Compose publishes `/health`; Prometheus sidecar scrapes
+  `/metrics` on the Docker network (UI on host `:9091` by default).
 
 ### 10. Logging Modes
 
@@ -574,6 +575,6 @@ as each milestone lands.
 | M7 — Notifications | Complete | [`m7-notifications.md`](milestones/m7-notifications.md) — console + Discord/Telegram via event subscriptions; Discord webhook per `ENV` |
 | M8a — Demo Execution | Complete (A–C) | [`m8-demo-execution.md`](milestones/m8-demo-execution.md) — `DemoBroker` + Binance demo; IG Phase C in [`m8c-ig-demo-adapter.md`](milestones/m8c-ig-demo-adapter.md) |
 | M8b — Live Execution | Planned | Mainnet `LiveBroker`, double-gated |
-| M9 — Docker | Planned | — |
+| M9 — Docker | Complete | [`m9-docker.md`](milestones/m9-docker.md) — Compose demo soak, `/health` sidecar, Prometheus (+ optional Grafana) |
 
-**Recommended build order:** ~~M0–M8a~~ ✅ → paper/demo soak → M9 Docker (optional) → **M8b live**.
+**Recommended build order:** ~~M0–M8a~~ ✅ → ~~M9 Docker~~ ✅ → paper/demo soak on VPS/Pi → **M8b live**.

@@ -498,3 +498,25 @@ class TestOrderConstructionDetails:
         assert first.order is not None
         assert second.order is not None
         assert first.order.order_id != second.order.order_id
+
+    def test_atr_risk_metadata_sizes_off_stop_distance(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        engine = _engine(equity=Decimal("10000"), rules=btc_usdt_instrument_rules, fraction=1.0)
+        bar = make_bar(close="100", open_="100", high="100", low="100")
+        # risk_cash = 10000 * 0.01 = 100; stop_dist = 2 * 10 = 20 → qty = 5
+        signal = Signal(
+            symbol="BTC/USDT",
+            signal_type=SignalType.BUY,
+            strategy_name="connors",
+            timestamp=UTC_TS,
+            metadata={
+                "sizing": "atr_risk",
+                "atr": 10.0,
+                "atr_stop_mult": 2.0,
+                "risk_pct": 0.01,
+            },
+        )
+        decision = engine.evaluate(signal, bar)
+        assert decision.order is not None
+        assert decision.order.quantity == Decimal("5")

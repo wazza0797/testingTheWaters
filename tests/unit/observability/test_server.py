@@ -3,7 +3,12 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from trading_platform.infrastructure.metrics.prometheus import PrometheusMetricsCollector
-from trading_platform.observability.server import HealthStatus, create_app
+from trading_platform.observability.server import (
+    HealthStatus,
+    create_app,
+    create_health_app,
+    create_metrics_app,
+)
 
 
 class TestObservabilityServer:
@@ -40,3 +45,15 @@ class TestObservabilityServer:
         response = client.get("/metrics")
 
         assert "trading_bars_processed_total" in response.text
+
+    def test_health_only_app_has_no_metrics_route(self) -> None:
+        client = TestClient(create_health_app(HealthStatus()))
+        assert client.get("/health").status_code == 200
+        assert client.get("/metrics").status_code == 404
+
+    def test_metrics_only_app_has_no_health_route(self) -> None:
+        collector = PrometheusMetricsCollector()
+        collector.set_gauge("trading_cpu_percent", 1.5)
+        client = TestClient(create_metrics_app(collector))
+        assert client.get("/health").status_code == 404
+        assert "trading_cpu_percent 1.5" in client.get("/metrics").text

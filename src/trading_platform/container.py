@@ -12,6 +12,7 @@ from trading_platform.analytics.handler import AnalyticsHandler
 from trading_platform.analytics.state import RunningPerformanceState
 from trading_platform.application.demo_loop import DemoTradingLoop
 from trading_platform.application.paper_loop import PaperTradingLoop
+from trading_platform.application.warmup import load_warmup_bars, resolve_warmup_bar_count
 from trading_platform.backtesting.broker_sim import SimBroker
 from trading_platform.backtesting.engine import BacktestEngine
 from trading_platform.backtesting.fill_simulator import FillSimulator
@@ -283,7 +284,12 @@ def build_backtest_engine(
             atr_period=backtest_config.spread_atr_period,
         ),
         fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
-        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        partial_fill_model=PartialFillModel(
+            backtest_config.volume_participation_rate,
+            assume_full_liquidity_when_no_volume=(
+                backtest_config.assume_full_liquidity_when_no_volume
+            ),
+        ),
         use_next_bar_open=backtest_config.use_next_bar_open,
     )
     broker = SimBroker(
@@ -418,7 +424,12 @@ def build_paper_session(
             atr_period=backtest_config.spread_atr_period,
         ),
         fee_model=FeeModel(assume_maker_on_limit=backtest_config.assume_maker_on_limit),
-        partial_fill_model=PartialFillModel(backtest_config.volume_participation_rate),
+        partial_fill_model=PartialFillModel(
+            backtest_config.volume_participation_rate,
+            assume_full_liquidity_when_no_volume=(
+                backtest_config.assume_full_liquidity_when_no_volume
+            ),
+        ),
         use_next_bar_open=backtest_config.use_next_bar_open,
     )
     broker = PaperBroker(
@@ -532,7 +543,7 @@ def build_demo_session(
     if container.settings.environment != Environment.DEMO:
         raise ConfigurationError(
             "trading-platform demo requires ENV=demo "
-            "(and BINANCE_DEMO_API_KEY / BINANCE_DEMO_API_SECRET for Binance)."
+            "(BINANCE_DEMO_* for Binance, or IG_DEMO_* for IG)."
         )
 
     config = container.config
@@ -543,7 +554,8 @@ def build_demo_session(
 
     if config.strategy.path is None:
         raise ConfigurationError(
-            "No strategy configured for demo trading — set 'strategy.path' in config/demo.yaml."
+            "No strategy configured for demo trading — set 'strategy.path' in "
+            "config/demo.yaml (or a research overlay such as ig-us500)."
         )
 
     # Re-bind adapter for this exchange+demo mode (container may have been built
@@ -609,6 +621,19 @@ def build_demo_session(
     container.event_bus.subscribe(BarClosed, portfolio_handler)
     container.event_bus.subscribe(FillReceived, container.notification_handler)
 
+    warmup_bars = load_warmup_bars(
+        container.market_data_repository,
+        adapter,
+        symbol,
+        timeframe,
+        min_bars=resolve_warmup_bar_count(params),
+        through=last_bar_ts,
+    )
+    strategy_handler.warmup(warmup_bars)
+    if last_bar_ts is None and warmup_bars:
+        last_bar_ts = warmup_bars[-1].timestamp
+        portfolio_handler.set_bar_cursor(last_bar_ts)
+
     feed = PollingMarketDataFeed(adapter)
     loop = DemoTradingLoop(
         container.event_bus,
@@ -616,7 +641,7 @@ def build_demo_session(
         broker,
         symbol=symbol,
         timeframe=timeframe,
-        poll_interval_sec=demo_cfg.order_poll_interval_sec,
+        poll_interval_sec=demo_cfg.poll_interval_sec,
         last_bar_timestamp=last_bar_ts,
         should_stop=should_stop,
         on_heartbeat=on_heartbeat,

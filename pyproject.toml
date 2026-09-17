@@ -23,6 +23,9 @@ dependencies = [
     "pyarrow>=16.0",
     # M2 — indicator engine
     "pandas>=2.2",
+    # M8a — IG REST client (also used transitively by uvicorn[standard] in
+    # local/dev installs; declare explicitly so Docker `--no-dev` has it).
+    "httpx>=0.27",
     # M3+ — added when needed:
     #   apscheduler (M6 paper trading loop)
 ]
@@ -42,7 +45,6 @@ dev = [
     "types-pyyaml>=6.0",
     "types-psutil>=6.0",
     "pandas-stubs>=2.2",
-    "httpx>=0.27",
 ]
 
 [build-system]

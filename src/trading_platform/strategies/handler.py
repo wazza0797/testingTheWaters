@@ -7,6 +7,7 @@ from trading_platform.domain.errors import StrategyError
 from trading_platform.domain.events.base import Event
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.events.strategy import SignalGenerated
+from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.ports.event_bus import IEventBus
 from trading_platform.domain.ports.strategy import IStrategy, StrategyContext
 
@@ -105,6 +106,35 @@ class StrategyHandler:
                     signal=identified_signal, bar=bar, correlation_id=event.correlation_id
                 )
             )
+
+    def warmup(self, bars: list[Bar]) -> int:
+        """Feed historical bars into the strategy without publishing signals.
+
+        Used by paper/demo session startup so long lookbacks (e.g. SMA200)
+        are warm before the first live `BarClosed`. Returns how many bars
+        were applied. Signals from warmup bars are discarded — the session
+        starts flat relative to strategy entries and waits for the next
+        live bar.
+        """
+        applied = 0
+        for bar in bars:
+            if bar.symbol != self._symbol or bar.timeframe != self._timeframe:
+                continue
+            if not self._started:
+                self._strategy.on_start(self._context)
+                self._started = True
+            self._strategy.on_bar(bar, self._context)
+            applied += 1
+        if applied:
+            logger.info(
+                "strategy_warmup_complete",
+                extra={
+                    "strategy": self._name,
+                    "symbol": self._symbol,
+                    "bars": applied,
+                },
+            )
+        return applied
 
     def stop(self) -> None:
         """Invoke the strategy's `on_stop` hook, if it was ever started.

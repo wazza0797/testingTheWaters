@@ -1,0 +1,16 @@
+# Prometheus scrape config for Milestone 9 compose stack.
+# Scrapes the trading-platform container's /metrics on the Docker network.
+# App METRICS_PORT stays 9090 in-container; Prometheus UI is published on host
+# port 9091 to avoid clashing with that port mapping.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: trading-platform
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["trading-platform:9090"]
+        labels:
+          service: trading-platform

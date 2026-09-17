@@ -149,7 +149,7 @@ class PassThroughRiskEngine:
     ) -> RiskDecision:
         price = bar.close
         equity = self._portfolio.equity({signal.symbol: price})
-        quantity = self._sizer.size(equity, price, rules)
+        quantity = self._size_open(signal, equity, price, rules)
         if quantity <= 0:
             return RiskDecision(
                 order=None,
@@ -174,6 +174,36 @@ class PassThroughRiskEngine:
             order=self._build_order(signal, bar, side, affordable_quantity),
             rejection_reason=None,
         )
+
+    def _size_open(
+        self,
+        signal: Signal,
+        equity: Decimal,
+        price: Decimal,
+        rules: InstrumentRules,
+    ) -> Decimal:
+        """Size an opening order.
+
+        Default: `EquityFractionSizer` (fraction of equity).
+
+        When `signal.metadata["sizing"] == "atr_risk"`, size so that
+        `risk_pct * equity` equals `atr_stop_mult * atr` dollars of stop
+        distance (Connors-style). ATR/risk fields must be present and
+        positive; otherwise falls back to the equity-fraction sizer.
+        """
+        meta = signal.metadata
+        if meta.get("sizing") == "atr_risk":
+            try:
+                atr = Decimal(str(meta["atr"]))
+                risk_pct = Decimal(str(meta["risk_pct"]))
+                stop_mult = Decimal(str(meta.get("atr_stop_mult", 2.0)))
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                return self._sizer.size(equity, price, rules)
+            if atr > 0 and risk_pct > 0 and stop_mult > 0 and equity > 0:
+                stop_dist = stop_mult * atr
+                raw = (equity * risk_pct) / stop_dist
+                return round_qty(raw, rules)
+        return self._sizer.size(equity, price, rules)
 
     def _affordable_quantity(
         self, quantity: Decimal, price: Decimal, rules: InstrumentRules

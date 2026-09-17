@@ -17,6 +17,7 @@ from trading_platform.exchanges.ig.client import ACCOUNT_CASH_SENTINEL, DEMO_BAS
 from trading_platform.exchanges.ig.mapper import (
     build_open_position_body,
     map_confirm_to_order_status,
+    map_instrument_rules,
     map_price_points,
     pick_dealing_currency,
     pick_expiry,
@@ -95,6 +96,22 @@ class TestIgMapper:
         assert len(bars) == 1
         assert bars[0].open == Decimal("1.1")
         assert bars[0].close == Decimal("1.1")
+
+    def test_map_instrument_rules_qty_step_is_min_deal_not_stop_distance(self) -> None:
+        """IG minStepDistance is a price stop distance — must not become qty step."""
+        rules = map_instrument_rules(
+            "IX.D.SPTRD.IFM.IP",
+            {
+                "dealingRules": {
+                    "minDealSize": {"value": 0.04},
+                    "minStepDistance": {"value": 1.0},
+                },
+                "snapshot": {"bid": 7500.0, "offer": 7500.5},
+            },
+        )
+        assert rules.min_qty == Decimal("0.04")
+        assert rules.step_size == Decimal("0.04")
+        assert rules.qty_precision == 2
 
     def test_map_confirm_accepted(self) -> None:
         status = map_confirm_to_order_status(

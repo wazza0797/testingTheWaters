@@ -54,6 +54,32 @@ _ALWAYS_ON_TREND_REGIME = {
 
 _CLOSES = ["100", "100", "100", "100", "100", "200", "50", "50", "50", "50", "50"]
 
+# Mirror image of `_ALWAYS_ON_TREND_REGIME`'s playbook: short on the death
+# cross, cover on the golden cross. Against `_CLOSES_WITH_COVER` this fires
+# SELL at index 7 and CLOSE at index 12 (see `test_rule_strategy.py`'s
+# `_CLOSES_WITH_COVER` for the hand-verified sma(2)/sma(3) crossing table).
+_ALWAYS_ON_SHORT_REGIME = {
+    "name": "trend_short",
+    "when": {"compare": {"indicator": "sma", "period": 1, "op": ">", "value": 0.0}},
+    "playbook": {
+        "short_entry": {
+            "cross": {
+                "left": {"indicator": "sma", "period": 2},
+                "right": {"indicator": "sma", "period": 3},
+                "direction": "below",
+            }
+        },
+        "short_exit": {
+            "cross": {
+                "left": {"indicator": "sma", "period": 2},
+                "right": {"indicator": "sma", "period": 3},
+                "direction": "above",
+            }
+        },
+    },
+}
+_CLOSES_WITH_COVER = _CLOSES + ["50", "300", "300"]
+
 
 class TestConstruction:
     def test_requires_non_empty_regimes(self) -> None:
@@ -90,8 +116,79 @@ class TestConstruction:
         with pytest.raises(ValueError, match="min_regime_bars"):
             RegimeRouterStrategy(regimes=[_ALWAYS_ON_TREND_REGIME], min_regime_bars=0)
 
+    def test_rejects_playbook_mixing_legacy_and_long_short_keys(self) -> None:
+        never_true = {"compare": {"indicator": "sma", "period": 1, "op": "<", "value": 0.0}}
+        bad = {
+            "name": "x",
+            "when": _ALWAYS_ON_TREND_REGIME["when"],
+            "playbook": {
+                "entry": never_true,
+                "exit": never_true,
+                "short_entry": never_true,
+                "short_exit": never_true,
+            },
+        }
+        with pytest.raises(ValueError, match="cannot mix"):
+            RegimeRouterStrategy(regimes=[bad])
 
-class TestSingleRegimeBehavesLikeRuleStrategy:
+    def test_rejects_playbook_short_entry_without_short_exit(self) -> None:
+        never_true = {"compare": {"indicator": "sma", "period": 1, "op": "<", "value": 0.0}}
+        bad = {
+            "name": "x",
+            "when": _ALWAYS_ON_TREND_REGIME["when"],
+            "playbook": {"short_entry": never_true},
+        }
+        with pytest.raises(ValueError, match="short_entry"):
+            RegimeRouterStrategy(regimes=[bad])
+
+    def test_rejects_partial_entry_hour_window(self) -> None:
+        with pytest.raises(ValueError, match="both"):
+            RegimeRouterStrategy(regimes=[_ALWAYS_ON_TREND_REGIME], entry_hour_start_utc=8)
+
+
+class TestSessionGates:
+    def test_blocks_entries_outside_hour_window(self, make_bar) -> None:
+        # Bars start at 00:00 UTC; entry window 10..16 should suppress overnight BUYs.
+        bars = _bars(make_bar, _CLOSES)
+        provider = _TogglablePositionProvider()
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h", position_provider=provider)
+        strategy = RegimeRouterStrategy(
+            regimes=[_ALWAYS_ON_TREND_REGIME],
+            lookback=10,
+            entry_hour_start_utc=10,
+            entry_hour_end_utc=16,
+        )
+        strategy.on_start(ctx)
+        types: list[SignalType] = []
+        for bar in bars:
+            types.extend(s.signal_type for s in strategy.on_bar(bar, ctx))
+        assert SignalType.BUY not in types
+
+    def test_session_flatten_closes_open_position(self, make_bar) -> None:
+        start = datetime(2024, 1, 1, 14, tzinfo=UTC)
+        bars = _bars(make_bar, ["100", "101", "102", "103"], start=start)
+        provider = _TogglablePositionProvider()
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h", position_provider=provider)
+        strategy = RegimeRouterStrategy(
+            regimes=[_ALWAYS_ON_TREND_REGIME],
+            lookback=10,
+            flatten_hour_utc=16,
+        )
+        strategy.on_start(ctx)
+        # Warm up flat through hour 14–15.
+        for bar in bars[:2]:
+            strategy.on_bar(bar, ctx)
+        # Open a position just before flatten hour.
+        provider.position = Position(
+            symbol="BTC/USDT",
+            quantity=Decimal("1"),
+            average_entry_price=Decimal("100"),
+        )
+        # hour=16 → flatten
+        signals = strategy.on_bar(bars[2], ctx)
+        assert any(s.signal_type == SignalType.CLOSE for s in signals)
+        assert any(s.metadata.get("reason") == "session_flatten" for s in signals)
+
     def test_emits_buy_and_close_on_transition_bars(self, make_bar) -> None:
         bars = _bars(make_bar, _CLOSES)
         provider = _TogglablePositionProvider()
@@ -128,6 +225,48 @@ class TestSingleRegimeBehavesLikeRuleStrategy:
 
         assert buy_signal is not None
         assert buy_signal.metadata["regime"] == "trend"
+
+
+class TestShortOnlyPlaybook:
+    def test_emits_sell_and_close_on_transition_bars(self, make_bar) -> None:
+        bars = _bars(make_bar, _CLOSES_WITH_COVER)
+        provider = _TogglablePositionProvider()
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h", position_provider=provider)
+        strategy = RegimeRouterStrategy(regimes=[_ALWAYS_ON_SHORT_REGIME], lookback=20)
+        strategy.on_start(ctx)
+
+        signals_by_index: dict[int, list[Signal]] = {}
+        for i, bar in enumerate(bars):
+            signals = strategy.on_bar(bar, ctx)
+            signals_by_index[i] = signals
+            for signal in signals:
+                if signal.signal_type == SignalType.SELL:
+                    provider.position = Position(
+                        symbol="BTC/USDT", quantity=Decimal("-1"), average_entry_price=bar.close
+                    )
+                elif signal.signal_type == SignalType.CLOSE:
+                    provider.position = None
+
+        assert [s.signal_type for s in signals_by_index[7]] == [SignalType.SELL]
+        assert [s.signal_type for s in signals_by_index[12]] == [SignalType.CLOSE]
+        for i, signals in signals_by_index.items():
+            if i not in (7, 12):
+                assert signals == [], f"expected no signal at index {i}, got {signals}"
+
+    def test_sell_metadata_includes_regime_name(self, make_bar) -> None:
+        bars = _bars(make_bar, _CLOSES_WITH_COVER)
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h")
+        strategy = RegimeRouterStrategy(regimes=[_ALWAYS_ON_SHORT_REGIME], lookback=20)
+        strategy.on_start(ctx)
+
+        sell_signal = None
+        for bar in bars:
+            for signal in strategy.on_bar(bar, ctx):
+                if signal.signal_type == SignalType.SELL:
+                    sell_signal = signal
+
+        assert sell_signal is not None
+        assert sell_signal.metadata["regime"] == "trend_short"
 
 
 class TestRegimeSelectionAndPriority:
@@ -294,6 +433,39 @@ class TestRegimeSwitchFlattensOpenPosition:
         assert len(signals) == 1
         assert signals[0].signal_type == SignalType.CLOSE
         assert signals[0].metadata == {"reason": "regime_switch", "new_regime": "flat"}
+
+    def test_switching_away_flattens_an_open_short(self, make_bar) -> None:
+        regime_a = {
+            "name": "a",
+            "when": _above_100(),
+            "playbook": {"short_entry": _NEVER, "short_exit": _NEVER},
+        }
+        regime_b = {
+            "name": "b",
+            "when": _below_100(),
+            "playbook": {"entry": _NEVER, "exit": _NEVER},
+        }
+
+        provider = _TogglablePositionProvider()
+        ctx = DefaultStrategyContext(symbol="BTC/USDT", timeframe="1h", position_provider=provider)
+        strategy = RegimeRouterStrategy(
+            regimes=[regime_a, regime_b], lookback=10, min_regime_bars=1
+        )
+        strategy.on_start(ctx)
+
+        bars = _bars(make_bar, ["100", "50"])
+        strategy.on_bar(bars[0], ctx)  # activates regime "a", still flat
+        assert strategy._active_index == 0
+
+        provider.position = Position(
+            symbol="BTC/USDT", quantity=Decimal("-1"), average_entry_price=Decimal("100")
+        )
+        signals = strategy.on_bar(bars[1], ctx)  # `when` flips to regime "b"
+
+        assert strategy._active_index == 1
+        assert len(signals) == 1
+        assert signals[0].signal_type == SignalType.CLOSE
+        assert signals[0].metadata == {"reason": "regime_switch", "new_regime": "b"}
 
     def test_no_flatten_signal_when_already_flat(self, make_bar) -> None:
         regime_a = {

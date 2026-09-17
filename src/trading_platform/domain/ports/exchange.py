@@ -22,6 +22,16 @@ class IExchangeAdapter(Protocol):
     @property
     def exchange_name(self) -> str: ...
 
+    @property
+    def max_ohlcv_limit(self) -> int:
+        """Hard per-request cap on `fetch_ohlcv` results (e.g. 1000 on Binance,
+
+        500 on IG). `DataIngestService` uses this to size each page request
+        and to detect the final ("short") page, instead of assuming every
+        venue shares one global page size — see `market_data/ingest.py`.
+        """
+        ...
+
     def fetch_ohlcv(
         self,
         symbol: str,
