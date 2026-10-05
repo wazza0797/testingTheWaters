@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from trading_platform.domain.models.bar import Bar
 from trading_platform.domain.models.position import Position
 from trading_platform.domain.ports.portfolio import IPositionProvider
 from trading_platform.indicators import IndicatorRegistry, build_default_registry
+from trading_platform.portfolio.legs import LegBook
 
 
 class NullPositionProvider:
@@ -36,6 +38,7 @@ class DefaultStrategyContext:
     params: Mapping[str, Any] = field(default_factory=dict)
     position_provider: IPositionProvider = field(default_factory=NullPositionProvider)
     registry: IndicatorRegistry = field(default_factory=build_default_registry)
+    leg_book: LegBook | None = None
 
     def indicator(self, name: str, bars: Sequence[Bar], **kwargs: Any) -> float:
         """Latest value of a named indicator, computed over `bars`.
@@ -56,3 +59,11 @@ class DefaultStrategyContext:
 
     def position_for(self, symbol: str) -> Position | None:
         return self.position_provider.position_for(symbol)
+
+    def leg_qty(self, symbol: str, leg: str) -> Decimal:
+        """Quantity on the named leg (`core` | `tilt`); 0 if no leg book."""
+        if self.leg_book is None:
+            return Decimal("0")
+        if leg not in ("core", "tilt"):
+            return Decimal("0")
+        return self.leg_book.qty(symbol, leg)  # type: ignore[arg-type]

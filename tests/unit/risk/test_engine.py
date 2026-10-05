@@ -520,3 +520,60 @@ class TestOrderConstructionDetails:
         decision = engine.evaluate(signal, bar)
         assert decision.order is not None
         assert decision.order.quantity == Decimal("5")
+
+
+class TestCoreTiltLegs:
+    def test_allows_tilt_add_while_long(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        position = Position(
+            symbol="BTC/USDT", quantity=Decimal("1"), average_entry_price=Decimal("100")
+        )
+        engine = _engine(
+            equity=Decimal("10000"),
+            cash=Decimal("5000"),
+            position=position,
+            rules=btc_usdt_instrument_rules,
+        )
+        bar = make_bar(close="100", open_="100", high="100", low="100")
+        signal = Signal(
+            symbol="BTC/USDT",
+            signal_type=SignalType.BUY,
+            strategy_name="connors_core_tilt",
+            timestamp=UTC_TS,
+            metadata={
+                "leg": "tilt",
+                "reason": "entry",
+                "sizing": "atr_risk",
+                "atr": 10.0,
+                "atr_stop_mult": 2.0,
+                "risk_pct": 0.01,
+            },
+        )
+        decision = engine.evaluate(signal, bar)
+        assert decision.approved
+        assert decision.order is not None
+        assert decision.order.side == OrderSide.BUY
+        assert decision.order.metadata.get("leg") == "tilt"
+        assert decision.order.metadata.get("reason") == "entry"
+
+    def test_tilt_partial_close_preserves_core(
+        self, make_bar, btc_usdt_instrument_rules: InstrumentRules
+    ) -> None:
+        position = Position(
+            symbol="BTC/USDT", quantity=Decimal("10"), average_entry_price=Decimal("100")
+        )
+        engine = _engine(position=position, rules=btc_usdt_instrument_rules)
+        signal = Signal(
+            symbol="BTC/USDT",
+            signal_type=SignalType.CLOSE,
+            strategy_name="connors_core_tilt",
+            timestamp=UTC_TS,
+            metadata={"leg": "tilt", "reason": "regime_exit", "close_qty": "3"},
+        )
+        decision = engine.evaluate(signal, make_bar())
+        assert decision.approved
+        assert decision.order is not None
+        assert decision.order.side == OrderSide.SELL
+        assert decision.order.quantity == Decimal("3")
+        assert decision.order.metadata.get("reason") == "regime_exit"

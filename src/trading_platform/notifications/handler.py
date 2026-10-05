@@ -67,14 +67,20 @@ def format_event(event: Event) -> tuple[str, str] | None:
     if isinstance(event, FillReceived):
         fill = event.fill
         order = event.order
+        leg = order.metadata.get("leg")
+        reason = order.metadata.get("reason")
+        tag = ""
+        if leg or reason:
+            tag = f" leg={leg or '-'} reason={reason or '-'}"
+        level = "warning" if reason == "regime_exit" else "info"
         return (
             (
                 f"FILL {fill.side.value} {fill.symbol} "
                 f"qty={fill.filled_qty} @ {fill.fill_price} "
                 f"fee={fill.fee} ({fill.fee_type.value}) "
-                f"order={order.order_id} complete={fill.is_complete}"
+                f"order={order.order_id} complete={fill.is_complete}{tag}"
             ),
-            "info",
+            level,
         )
     if isinstance(event, RiskRejected):
         # Trading-policy reject: no Order was created (e.g. cash / sizing rules).

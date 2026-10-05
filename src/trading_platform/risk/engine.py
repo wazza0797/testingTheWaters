@@ -26,16 +26,20 @@ class PassThroughRiskEngine:
     approves everything it can structurally act on and rejects the rest —
     no max-position, drawdown, or other real risk rules exist yet.
 
-    Position semantics (one open position per symbol, no pyramiding):
+    Position semantics (one open position per symbol by default; core+tilt
+    exception below):
 
     - `BUY` while flat → open long (sized + cash-affordable).
     - `BUY` while short → cover the entire short (`OrderSide.BUY`).
-    - `BUY` while long → rejected.
+    - `BUY` while long → rejected, **except** Connors tilt add-on:
+      `metadata.leg == "tilt"` and `metadata.reason == "entry"` → size and add.
     - `SELL` while flat → open short **only if** `InstrumentRules.allows_short`
       (derivatives/CFDs); spot stays False so SELL-while-flat is rejected.
     - `SELL` while long → close the entire long.
     - `SELL` while short → rejected (no short pyramiding).
     - `CLOSE` while long → sell to flat; while short → buy to cover; flat → reject.
+      **Tilt partial exit:** `metadata.leg == "tilt"` with positive
+      `metadata.close_qty` → sell only that quantity (core remains).
 
     - **Any** signal while an earlier order for the same symbol is still
       outstanding (queued on latency, or only partially filled): rejected.
@@ -97,6 +101,26 @@ class PassThroughRiskEngine:
             order=None, rejection_reason=f"unsupported signal_type {signal.signal_type!r}"
         )
 
+    @staticmethod
+    def _is_tilt_add(signal: Signal) -> bool:
+        meta = signal.metadata
+        return meta.get("leg") == "tilt" and meta.get("reason") == "entry"
+
+    @staticmethod
+    def _tilt_close_qty(signal: Signal) -> Decimal | None:
+        """Partial tilt exit quantity from signal metadata, if present."""
+        meta = signal.metadata
+        if meta.get("leg") != "tilt":
+            return None
+        raw = meta.get("close_qty")
+        if raw is None:
+            return None
+        try:
+            qty = Decimal(str(raw))
+        except (ArithmeticError, ValueError, TypeError):
+            return None
+        return qty if qty > 0 else None
+
     def _evaluate_buy(
         self, signal: Signal, bar: Bar, rules: InstrumentRules, position: Position | None
     ) -> RiskDecision:
@@ -107,6 +131,9 @@ class PassThroughRiskEngine:
                 rejection_reason=None,
             )
         if position is not None and not position.is_flat:
+            # Core+tilt: allow adding a sized tilt on top of an existing long.
+            if self._is_tilt_add(signal):
+                return self._evaluate_open(signal, bar, rules, OrderSide.BUY)
             return RiskDecision(
                 order=None,
                 rejection_reason=(
@@ -241,6 +268,29 @@ class PassThroughRiskEngine:
                 rejection_reason=f"no open position for {signal.symbol} to close",
             )
 
+        tilt_qty = self._tilt_close_qty(signal)
+        if tilt_qty is not None:
+            if position.quantity <= 0:
+                return RiskDecision(
+                    order=None,
+                    rejection_reason=(
+                        f"tilt close requires a long position for {signal.symbol}; "
+                        f"got qty={position.quantity}"
+                    ),
+                )
+            if tilt_qty > position.quantity:
+                return RiskDecision(
+                    order=None,
+                    rejection_reason=(
+                        f"tilt close_qty {tilt_qty} exceeds long position "
+                        f"{position.quantity} for {signal.symbol}"
+                    ),
+                )
+            return RiskDecision(
+                order=self._build_order(signal, bar, OrderSide.SELL, tilt_qty),
+                rejection_reason=None,
+            )
+
         if position.quantity > 0:
             return RiskDecision(
                 order=self._build_order(signal, bar, OrderSide.SELL, position.quantity),
@@ -263,4 +313,5 @@ class PassThroughRiskEngine:
             price=None,
             strategy_name=signal.strategy_name,
             created_at=bar.timestamp,
+            metadata=dict(signal.metadata),
         )
