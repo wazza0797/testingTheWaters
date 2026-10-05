@@ -7,20 +7,24 @@ Hypothesis (retail-accessible, documented):
   fear — not a prediction engine.
 
 Critical research rules (from the strategy brief):
-  - Signal source = Yahoo daily cash index (^GSPC / ^FTSE), NOT IG's own daily
-    candle. IG will not match these RSI readings.
+  - Signal source = Yahoo daily cash index, NOT IG's own daily candle.
+    IG will not match these RSI readings.
   - Default fills = **next bar open** (signal at close is not tradeable).
-  - All stops/exits are **close-based** (no ^GSPC intraday stop fiction).
+  - All stops/exits are **close-based** (no cash-index intraday stop fiction).
   - Optional add-on unit / pyramiding is **not** modelled (platform: one position).
-  - Overnight financing + dividends are **not** in the default cost model;
-    pass --financing-bps-per-day if you have IG's current debit figure.
+  - Overnight financing: default ``ig_cash_long`` uses IG's published cash-index
+    formula for longs — (admin 3% + currency overnight benchmark) / day_count —
+    charged per *calendar night* between bars (weekends/holidays = multi-night).
+    Dividends on long index CFDs are **not** credited (conservative for longs).
   - ATR is used for **sizing only**, not as a stop.
 
 Usage:
     uv run python scripts/backfill_ig_external.py --yahoo '^GSPC' \\
         --epic IX.D.SPTRD.IFM.IP --timeframe 1d
     uv run python scripts/research_connors_rsi2.py
-    uv run python scripts/research_connors_rsi2.py --fill next_open --rsi-thresholds 5,10,15
+    uv run python scripts/research_connors_rsi2.py \\
+        --overlays ig-us500,ig-us-tech100,ig-dax-daily,ig-ftse \\
+        --rsi-thresholds 5,8,10,12,15,18 --financing-profile ig_cash_long
 """
 
 from __future__ import annotations
@@ -46,12 +50,38 @@ from trading_platform.market_data.repository.parquet import ParquetMarketDataRep
 from trading_platform.notifications.research import notify_demo_research
 
 FillMode = Literal["next_open", "signal_close"]
+FinancingProfile = Literal["off", "flat", "ig_cash_long"]
 
+# overlay -> (yahoo note, epic, currency for IG overnight table)
 _MARKETS: dict[str, tuple[str, str, str]] = {
-    # overlay -> (yahoo note, epic, default spread from overlay)
-    "ig-us500": ("^GSPC", "IX.D.SPTRD.IFM.IP", "ig-us500"),
-    "ig-ftse": ("^FTSE", "IX.D.FTSE.DAILY.IP", "ig-ftse"),
+    "ig-us500": ("^GSPC", "IX.D.SPTRD.IFM.IP", "USD"),
+    "ig-us-tech100": ("^NDX", "IX.D.NASDAQ.IFM.IP", "USD"),
+    "ig-dax-daily": ("^GDAXI", "IX.D.DAX.DAILY.IP", "EUR"),
+    "ig-ftse": ("^FTSE", "IX.D.FTSE.DAILY.IP", "GBP"),
 }
+
+# IG cash-index overnight (indicative, WC 07–13 Sep 2026 help-centre table).
+# Long annual rate = admin_fee% + overnight_benchmark%. Day count 360 except
+# GBP/SGD/ZAR markets (365). Snapshot — re-check IG weekly table before live.
+_IG_ADMIN_FEE_PCT = 3.0
+_IG_OVERNIGHT_BENCHMARK_PCT: dict[str, float] = {
+    "USD": 3.77,
+    "EUR": 2.23,
+    "GBP": 3.76,
+}
+_IG_DAY_COUNT: dict[str, int] = {
+    "USD": 360,
+    "EUR": 360,
+    "GBP": 365,
+}
+
+
+def _ig_long_financing_bps_per_night(currency: str) -> float:
+    """Single-night long debit in bps of notional (IG cash index formula)."""
+    bench = _IG_OVERNIGHT_BENCHMARK_PCT[currency]
+    day_count = _IG_DAY_COUNT[currency]
+    annual_pct = _IG_ADMIN_FEE_PCT + bench
+    return 100.0 * annual_pct / day_count  # pct -> bps: *100; /day_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,11 +142,16 @@ def simulate(
     atr_stop_mult: float,
     atr_period: int,
     spread_bps: float,
-    financing_bps_per_day: float,
+    financing_bps_per_night: float,
     fill: FillMode,
     starting_cash: float,
 ) -> SimResult:
-    """Close-signal / next-open (or optimistic signal-close) simulator."""
+    """Close-signal / next-open (or optimistic signal-close) simulator.
+
+    Financing is charged on each bar while long, scaled by calendar nights
+    since the previous bar (Fri→Mon = 3). ``financing_bps_per_night`` is the
+    single-night IG debit in bps of notional.
+    """
     close = df["close"]
     high = df["high"]
     low = df["low"]
@@ -131,6 +166,7 @@ def simulate(
     sma200_a = sma200.to_numpy(dtype=np.float64)
     sma5_a = sma5.to_numpy(dtype=np.float64)
     atr_a = atr.to_numpy(dtype=np.float64)
+    ts = pd.to_datetime(df["ts"]).to_numpy()
     n = len(df)
 
     cash = starting_cash
@@ -192,8 +228,12 @@ def simulate(
         entry_i = -1
 
     for i in range(n):
-        if qty > 0 and i > 0 and financing_bps_per_day > 0:
-            cash -= qty * open_[i] * (financing_bps_per_day / 10_000.0)
+        if qty > 0 and i > 0 and financing_bps_per_night > 0:
+            # Calendar nights between bars (weekends / holidays count).
+            prev = pd.Timestamp(ts[i - 1]).date()
+            cur = pd.Timestamp(ts[i]).date()
+            nights = max(1, (cur - prev).days)
+            cash -= qty * open_[i] * (financing_bps_per_night / 10_000.0) * nights
 
         if fill == "next_open":
             if pending_exit:
@@ -275,14 +315,22 @@ def _parse_date(raw: str | None) -> date | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--overlays", default="ig-us500,ig-ftse")
+    parser.add_argument(
+        "--overlays",
+        default="ig-us500,ig-us-tech100,ig-dax-daily,ig-ftse",
+        help="Comma overlays from _MARKETS (corroboration default: 4 indices).",
+    )
     parser.add_argument(
         "--fill",
         choices=("next_open", "signal_close"),
         default="next_open",
         help="next_open = honest; signal_close = optimistic diagnostic.",
     )
-    parser.add_argument("--rsi-thresholds", default="5,10,15")
+    parser.add_argument(
+        "--rsi-thresholds",
+        default="5,8,10,12,15,18",
+        help="Neighborhood around the prior rsi<15 candidate (include 8/12/18).",
+    )
     parser.add_argument("--risk-pct", type=float, default=0.01, help="Equity risk per trade.")
     parser.add_argument(
         "--atr-stop-mult",
@@ -292,10 +340,20 @@ def main() -> None:
     )
     parser.add_argument("--time-stop-days", type=int, default=10)
     parser.add_argument(
-        "--financing-bps-per-day",
+        "--financing-profile",
+        choices=("off", "flat", "ig_cash_long"),
+        default="ig_cash_long",
+        help=(
+            "off=0; flat=use --financing-bps-per-night for all markets; "
+            "ig_cash_long=IG admin+benchmark / day_count per currency "
+            "(calendar nights between bars)."
+        ),
+    )
+    parser.add_argument(
+        "--financing-bps-per-night",
         type=float,
         default=0.0,
-        help="Optional overnight debit in bps of notional per day (from IG product page).",
+        help="Used when --financing-profile=flat (bps of notional per calendar night).",
     )
     parser.add_argument("--starting-cash", type=float, default=50_000.0)
     parser.add_argument(
@@ -307,7 +365,7 @@ def main() -> None:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=Path("data/research/connors_rsi2.csv"),
+        default=Path("data/research/connors_rsi2_corroboration.csv"),
     )
     parser.add_argument("--no-discord", action="store_true")
     args = parser.parse_args()
@@ -316,6 +374,7 @@ def main() -> None:
     thresholds = [float(x) for x in args.rsi_thresholds.split(",") if x.strip()]
     is_end = _parse_date(args.is_end)
     oos_start = _parse_date(args.oos_start)
+    profile: FinancingProfile = args.financing_profile
 
     settings = Settings()
     repo = ParquetMarketDataRepository(Path(settings.data_dir), exchange="ig")
@@ -323,18 +382,35 @@ def main() -> None:
     print("Connors RSI(2) index reversal — daily bars")
     print(
         f"fill={args.fill} risk={args.risk_pct:.2%} atr_mult={args.atr_stop_mult} "
-        f"time_stop={args.time_stop_days}d financing_bps/day={args.financing_bps_per_day}"
+        f"time_stop={args.time_stop_days}d financing_profile={profile}"
     )
+    if profile == "ig_cash_long":
+        parts = [
+            f"{ccy}=admin{_IG_ADMIN_FEE_PCT:g}+{_IG_OVERNIGHT_BENCHMARK_PCT[ccy]:g}"
+            f"/{_IG_DAY_COUNT[ccy]}"
+            f"→{_ig_long_financing_bps_per_night(ccy):.2f}bps/night"
+            for ccy in sorted({_MARKETS[o][2] for o in overlays if o in _MARKETS})
+        ]
+        print("  IG snapshot WC 07–13 Sep 2026: " + "; ".join(parts))
+    elif profile == "flat":
+        print(f"  flat financing={args.financing_bps_per_night:.2f} bps/night (all markets)")
     print(
         "Caveats: Yahoo cash close ≠ IG CFD daily; no pyramiding; "
-        "dividends not credited; financing off unless you set it.\n"
+        "dividends not credited (conservative for longs); "
+        "financing scaled by calendar nights between bars.\n"
     )
 
     rows: list[dict[str, Any]] = []
     for overlay in overlays:
         if overlay not in _MARKETS:
             raise SystemExit(f"Unknown overlay {overlay}; expected {sorted(_MARKETS)}")
-        yahoo, epic, _ = _MARKETS[overlay]
+        yahoo, epic, currency = _MARKETS[overlay]
+        if profile == "off":
+            fin_bps = 0.0
+        elif profile == "flat":
+            fin_bps = float(args.financing_bps_per_night)
+        else:
+            fin_bps = _ig_long_financing_bps_per_night(currency)
         cfg = load_config(overlay=overlay)
         spread = float(cfg.backtest.spread_bps or 1.0)
         bars = list(repo.load_bars(epic, "1d"))
@@ -349,7 +425,8 @@ def main() -> None:
         print(
             f"# {overlay} {epic} n={len(df)} "
             f"{df['ts'].iloc[0].date()}->{df['ts'].iloc[-1].date()} "
-            f"spread_bps={spread} yahoo={yahoo}"
+            f"spread_bps={spread} yahoo={yahoo} "
+            f"fin={fin_bps:.2f}bps/night ({currency})"
         )
 
         periods = [
@@ -376,7 +453,7 @@ def main() -> None:
                     atr_stop_mult=args.atr_stop_mult,
                     atr_period=14,
                     spread_bps=spread,
-                    financing_bps_per_day=args.financing_bps_per_day,
+                    financing_bps_per_night=fin_bps,
                     fill=args.fill,
                     starting_cash=args.starting_cash,
                 )
@@ -387,7 +464,9 @@ def main() -> None:
                     "rsi_threshold": thr,
                     "n_bars": len(slice_df),
                     "spread_bps": spread,
-                    "financing_bps_per_day": args.financing_bps_per_day,
+                    "financing_profile": profile,
+                    "financing_bps_per_night": fin_bps,
+                    "currency": currency,
                     "return_pct": res.return_pct,
                     "maxdd_pct": res.maxdd_pct,
                     "sharpe": res.sharpe,
@@ -426,6 +505,60 @@ def main() -> None:
         rets = ", ".join(f"<{r['rsi_threshold']:g}:{r['return_pct']:+.1f}%" for r in subset)
         print(f"{overlay}: {rets}")
 
+    # Corroboration gate: identical rule, no retune — OOS positive on ≥1 new market
+    print("\n=== Corroboration gate (OOS, identical rule, no retune) ===")
+    prior_markets = {"ig-us500", "ig-ftse"}
+    new_markets = [o for o in overlays if o not in prior_markets]
+    # Prefer rsi<15 as the prior "survivor" candidate; also report neighborhood.
+    focus_thr = 15.0 if 15.0 in thresholds else thresholds[len(thresholds) // 2]
+    oos_pos_new = 0
+    for overlay in overlays:
+        hit = next(
+            (
+                r
+                for r in rows
+                if r["overlay"] == overlay
+                and r["period"] == "OOS"
+                and r["rsi_threshold"] == focus_thr
+            ),
+            None,
+        )
+        if hit is None:
+            continue
+        tag = "NEW" if overlay in new_markets else "prior"
+        ok = hit["return_pct"] > 0
+        if overlay in new_markets and ok:
+            oos_pos_new += 1
+        print(
+            f"  [{tag}] {overlay} rsi<{focus_thr:g}: "
+            f"ret={hit['return_pct']:+.2f}% sharpe="
+            f"{hit['sharpe'] if hit['sharpe'] is not None else 'n/a'} "
+            f"trips={hit['trips']} → {'PASS' if ok else 'FAIL'}"
+        )
+    # Neighborhood stability on US500
+    us_oos = [
+        r
+        for r in rows
+        if r["overlay"] == "ig-us500" and r["period"] == "OOS" and r["fill"] == args.fill
+    ]
+    if us_oos:
+        pos_nb = sum(1 for r in us_oos if r["return_pct"] > 0)
+        print(
+            f"\n  US500 neighborhood: {pos_nb}/{len(us_oos)} thresholds OOS-positive "
+            f"(thresholds={','.join(f'{t:g}' for t in thresholds)})"
+        )
+    if new_markets:
+        if oos_pos_new >= 1:
+            print(
+                f"\n  Verdict: corroborated — {oos_pos_new}/{len(new_markets)} "
+                f"new market(s) OOS+ at rsi<{focus_thr:g} (identical rule)."
+            )
+        else:
+            print(
+                f"\n  Verdict: NOT corroborated — 0/{len(new_markets)} new markets "
+                f"OOS+ at rsi<{focus_thr:g}. Soften to 'best of N, still possibly noise'."
+            )
+
     args.csv.parent.mkdir(parents=True, exist_ok=True)
     with args.csv.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
@@ -438,7 +571,13 @@ def main() -> None:
     if args.fill == "next_open":
         print("\n=== Diagnostic: signal_close vs next_open (rsi<10, full sample) ===")
         for overlay in overlays:
-            epic = _MARKETS[overlay][1]
+            yahoo, epic, currency = _MARKETS[overlay]
+            if profile == "off":
+                fin_bps = 0.0
+            elif profile == "flat":
+                fin_bps = float(args.financing_bps_per_night)
+            else:
+                fin_bps = _ig_long_financing_bps_per_night(currency)
             bars = list(repo.load_bars(epic, "1d"))
             if len(bars) < 300:
                 continue
@@ -456,7 +595,7 @@ def main() -> None:
                     atr_stop_mult=args.atr_stop_mult,
                     atr_period=14,
                     spread_bps=spread,
-                    financing_bps_per_day=args.financing_bps_per_day,
+                    financing_bps_per_night=fin_bps,
                     fill=fill,  # type: ignore[arg-type]
                     starting_cash=args.starting_cash,
                 )
@@ -469,7 +608,7 @@ def main() -> None:
 
     summary = "\n".join(
         [
-            f"Research done: connors_rsi2 fill={args.fill}",
+            f"Research done: connors_rsi2 fill={args.fill} profile={profile}",
             f"overlays={','.join(overlays)} thresholds={args.rsi_thresholds}",
             f"IS end={args.is_end} OOS start={args.oos_start}",
             "OOS results:",

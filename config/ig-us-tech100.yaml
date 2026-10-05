@@ -1,0 +1,53 @@
+# IG Markets US Tech 100 cash CFD — Connors corroboration sleeve.
+# Signal source for research: Yahoo ^NDX daily. Yahoo ≠ IG CFD mid.
+#
+# Epic: IX.D.NASDAQ.IFM.IP — US Tech 100 Cash ($20/pt), CFD-demo friendly.
+# (Avoid *.DAILY.IP / DFB for CFD demo OTC opens.)
+#
+#   uv run python scripts/backfill_ig_external.py --yahoo '^NDX' \
+#       --epic IX.D.NASDAQ.IFM.IP --timeframe 1d
+#   uv run python scripts/research_connors_rsi2.py --overlays ig-us-tech100
+#
+# Costs: ~1.0 bps spread floor. Overnight financing modelled in research via
+# IG cash long formula (admin 3% + USD benchmark) / 360; see script.
+
+trading:
+  exchange: ig
+  symbol: IX.D.NASDAQ.IFM.IP
+  timeframe: 1d
+
+backtest:
+  starting_cash: "50000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.0
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 20
+  min_bars: 250
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.connors_rsi2:ConnorsRsi2Strategy"
+  params:
+    rsi_period: 2
+    rsi_threshold: 10.0
+    sma_regime_period: 200
+    sma_exit_period: 5
+    time_stop_bars: 10
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_pct: 0.01
