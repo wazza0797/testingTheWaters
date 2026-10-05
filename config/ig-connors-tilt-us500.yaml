@@ -1,0 +1,63 @@
+# IG Markets US 500 cash CFD — Connors core+tilt runner (tilt sleeve).
+#
+# Locked research: RSI(2)<15, SMA200 regime, SMA5/time/bare-SMA200 exits,
+# vol throttle 1.5, next-open fills, US bucket 1.5% × 39% Sharpe weight.
+# No mid-hold SMA200∧vol / vol-only exit — tested decision (see runner doc).
+#
+# DAX throttle caveat does not apply here; US500 covid fills were abundant.
+#
+#   uv run trading-platform backtest --overlay ig-connors-tilt-us500
+#   uv run trading-platform demo --overlay ig-connors-tilt-us500
+#
+# Core: seed a static long outside the daily loop (or hold existing venue
+# size as core on demo start). This overlay only manages the tilt leg.
+
+trading:
+  exchange: ig
+  symbol: IX.D.SPTRD.IFM.IP
+  timeframe: 1d
+
+demo:
+  poll_interval_sec: 30
+  order_poll_interval_sec: 5
+  state_file: "demo_state_ig_connors_tilt_us500.json"
+
+backtest:
+  starting_cash: "50000"
+  position_size_pct: 1.0
+  cash_safety_buffer_pct: 0.001
+  spread_bps: 1.0
+  spread_volatility_k: 0.15
+  spread_atr_period: 14
+  latency_bars: 1
+  volume_participation_rate: 0.10
+  assume_full_liquidity_when_no_volume: true
+  assume_maker_on_limit: true
+  use_next_bar_open: true
+
+validation:
+  enabled: false
+
+analytics:
+  min_round_trips: 20
+  min_bars: 250
+  min_daily_returns_for_sharpe: 30
+  bootstrap_iterations: 1000
+  bootstrap_seed: 42
+  market_sma_period: 200
+
+strategy:
+  path: "trading_platform.strategies.examples.connors_core_tilt:ConnorsCoreTiltStrategy"
+  params:
+    rsi_period: 2
+    rsi_threshold: 15.0
+    sma_regime_period: 200
+    sma_exit_period: 5
+    time_stop_bars: 10
+    atr_period: 14
+    atr_stop_mult: 2.0
+    # US bucket 1.5% × 39% (standalone OOS Sharpe weight)
+    risk_pct: 0.00585
+    vol_fast: 10
+    vol_slow: 60
+    vol_throttle_ratio: 1.5

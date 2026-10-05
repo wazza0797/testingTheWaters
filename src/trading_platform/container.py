@@ -56,6 +56,7 @@ from trading_platform.observability.summary import (
 from trading_platform.observability.system_monitor import SystemMonitor
 from trading_platform.portfolio.book import PortfolioBook
 from trading_platform.portfolio.handler import PortfolioHandler
+from trading_platform.portfolio.legs import LegAttributionHandler, LegBook
 from trading_platform.portfolio.persistence import (
     JsonPaperStateStore,
     book_from_snapshot,
@@ -317,19 +318,23 @@ def build_backtest_engine(
 
     strategy = instantiate_strategy(config.strategy.path, params)
     strategy_name = describe_strategy(config.strategy.path, symbol, params)
+    leg_book = LegBook()
     strategy_context = DefaultStrategyContext(
         symbol=symbol,
         timeframe=timeframe,
         params=params,
         position_provider=ledger,
+        leg_book=leg_book,
     )
     strategy_handler = StrategyHandler(
         strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name
     )
+    leg_handler = LegAttributionHandler(leg_book)
 
     container.event_bus.subscribe(BarClosed, strategy_handler)
     container.event_bus.subscribe(SignalGenerated, risk_handler)
     container.event_bus.subscribe(OrderApproved, execution_handler)
+    container.event_bus.subscribe(FillReceived, leg_handler)
 
     # Bypass AnalyticsHandler during simulated fills — post-run
     # `PerformanceReport` over `BacktestResult` is the source of truth.
@@ -414,7 +419,9 @@ def build_paper_session(
         last_bar_ts = None
     container.analytics_state.starting_cash = paper_cfg.starting_cash
 
-    portfolio_handler = PortfolioHandler(book, store, last_bar_timestamp=last_bar_ts)
+    portfolio_handler = PortfolioHandler(
+        book, store, last_bar_timestamp=last_bar_ts, leg_book=LegBook()
+    )
     rules_by_symbol = {symbol: instrument_rules}
 
     fill_simulator = FillSimulator(
@@ -462,6 +469,7 @@ def build_paper_session(
         timeframe=timeframe,
         params=params,
         position_provider=portfolio_handler,
+        leg_book=portfolio_handler.leg_book,
     )
     strategy_handler = StrategyHandler(
         strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name
@@ -584,7 +592,13 @@ def build_demo_session(
         )
     container.analytics_state.starting_cash = book.cash
 
-    portfolio_handler = PortfolioHandler(book, store, last_bar_timestamp=last_bar_ts)
+    portfolio_handler = PortfolioHandler(
+        book, store, last_bar_timestamp=last_bar_ts, leg_book=LegBook()
+    )
+    # Existing venue position is the static core; tilt sleeve starts flat.
+    existing = book.position_for(symbol)
+    if existing is not None and existing.quantity > 0 and portfolio_handler.leg_book is not None:
+        portfolio_handler.leg_book.set_qty(symbol, "core", existing.quantity)
     rules_by_symbol = {symbol: instrument_rules}
     broker = DemoBroker(adapter)
 
@@ -608,6 +622,7 @@ def build_demo_session(
         timeframe=timeframe,
         params=params,
         position_provider=portfolio_handler,
+        leg_book=portfolio_handler.leg_book,
     )
     strategy_handler = StrategyHandler(
         strategy, strategy_context, container.event_bus, symbol, timeframe, strategy_name

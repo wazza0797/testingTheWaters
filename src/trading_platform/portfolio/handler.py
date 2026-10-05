@@ -10,6 +10,7 @@ from trading_platform.domain.events.execution import FillReceived
 from trading_platform.domain.events.market import BarClosed
 from trading_platform.domain.models.position import Position
 from trading_platform.portfolio.book import PortfolioBook
+from trading_platform.portfolio.legs import LegBook
 from trading_platform.portfolio.persistence import (
     JsonPaperStateStore,
     snapshot_from_book,
@@ -33,15 +34,21 @@ class PortfolioHandler:
         store: JsonPaperStateStore | None = None,
         *,
         last_bar_timestamp: datetime | None = None,
+        leg_book: LegBook | None = None,
     ) -> None:
         self._book = book
         self._store = store
         self._last_bar_timestamp = last_bar_timestamp
         self._mark_prices: dict[str, Decimal] = {}
+        self._leg_book = leg_book
 
     @property
     def book(self) -> PortfolioBook:
         return self._book
+
+    @property
+    def leg_book(self) -> LegBook | None:
+        return self._leg_book
 
     @property
     def last_bar_timestamp(self) -> datetime | None:
@@ -74,6 +81,7 @@ class PortfolioHandler:
 
     def _on_fill(self, event: FillReceived) -> None:
         self._book.apply_fill(event.fill)
+        self._apply_leg_fill(event)
         self._persist()
         logger.info(
             "portfolio_fill_applied",
@@ -83,8 +91,22 @@ class PortfolioHandler:
                 "qty": str(event.fill.filled_qty),
                 "price": str(event.fill.fill_price),
                 "cash": str(self._book.cash),
+                "leg": event.order.metadata.get("leg"),
+                "reason": event.order.metadata.get("reason"),
             },
         )
+
+    def _apply_leg_fill(self, event: FillReceived) -> None:
+        if self._leg_book is None:
+            return
+        raw_leg = event.order.metadata.get("leg")
+        if raw_leg == "core" or raw_leg == "tilt":
+            self._leg_book.apply_fill(
+                event.fill.symbol,
+                leg=raw_leg,
+                side=event.fill.side.value,
+                filled_qty=event.fill.filled_qty,
+            )
 
     def _on_bar(self, event: BarClosed) -> None:
         bar = event.bar
