@@ -1,0 +1,251 @@
+# IG diversified trend-following — hybrid cost registry (Phase 0.5).
+#
+# Prices for research: Yahoo daily stand-ins under IG epic paths via
+# scripts/backfill_ig_external.py. Yahoo ≠ IG mid — results are indicative.
+#
+# Product mix (confirmed on IG demo 2026-09-17):
+#   - Index / bond / commodity legs → futures CFDs (no overnight funding;
+#     wider spread; dated expiry; auto-roll ≈ another N× dealing spread).
+#   - FX legs → cash CFDs only (no futures-CFD FX on demo); tom-next stub.
+#
+# Never use DFB / *.DAILY.IP for CFD demo. Prefer FWM (mini) futures epics.
+#
+# Locked signal defaults:
+#   SMA(100) L/S; risk 0.75%/ATR20; class cap 30%; circuit −3%/day;
+#   resize weekly; next-open fills.
+
+defaults:
+  timeframe: 1d
+  risk_pct: 0.0075
+  atr_period: 20
+  sma_period: 100
+  asset_class_cap: 0.30
+  gross_leverage_cap: 20.0
+  circuit_breaker_day_pct: -0.03
+  resize_every_bars: 5
+  starting_equity: 100000
+  # Roll cost multiplier on futures dealing spread (sensitivity: 1 / 1.5 / 2).
+  roll_spread_mult: 1.0
+  # FX cash overnight stub (bps of notional / day). Futures legs override to 0.
+  fx_financing_bps_per_day: 0.5
+
+markets:
+  # --- Equity index (futures CFD) — point value matches cash mini on demo ---
+  - id: us500
+    asset_class: equity_index
+    product: futures_cfd
+    epic: IX.D.SPTRD.FWM2.IP
+    yahoo: "^GSPC"
+    status: confirmed
+    point_value: 50.0
+    spread_bps: 3.1          # 2.4 pts @ ~7630
+    financing_bps_per_day: 0
+    roll_every_bars: 63      # ~quarterly
+    notes: "Mini futures; cash IFM also $50/pt — parity OK"
+
+  - id: us_tech100
+    asset_class: equity_index
+    product: futures_cfd
+    epic: IX.D.NASDAQ.FWM2.IP
+    yahoo: "^NDX"
+    status: confirmed
+    point_value: 20.0
+    spread_bps: 2.3          # 6.8 pts @ ~29430
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Mini futures; cash IFM $20/pt — parity OK"
+
+  - id: uk100
+    asset_class: equity_index
+    product: futures_cfd
+    epic: IX.D.FTSE.FWM2.IP
+    yahoo: "^FTSE"
+    status: confirmed
+    point_value: 2.0
+    spread_bps: 7.4          # 8 pts @ ~10805
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Replaces DAILY/DFB; cash IFM £2/pt — parity OK"
+
+  - id: de40
+    asset_class: equity_index
+    product: futures_cfd
+    epic: IX.D.DAX.FWM2.IP
+    yahoo: "^GDAXI"
+    status: confirmed
+    point_value: 5.0
+    spread_bps: 5.5          # 14 pts @ ~25645
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Replaces DAILY/DFB; cash IFM1 €5/pt — parity OK"
+
+  - id: jp225
+    asset_class: equity_index
+    product: futures_cfd
+    epic: IX.D.NIKFUT.FWM1.IP
+    yahoo: "^N225"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 4.8          # 30 pts @ ~63000
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Fut epic NIKFUT; cash NIKKEI IFM also $1/pt — parity OK"
+
+  # --- Bonds (futures CFD only on demo) ---
+  - id: us10y
+    asset_class: bond
+    product: futures_cfd
+    epic: IR.D.10YEAR100.FWM2.IP
+    yahoo: "ZN=F"
+    status: confirmed
+    point_value: 2.0
+    spread_bps: 2.0          # published ~4 pts on full; mini stub
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "10-Year T-Note Decimalised ($2); was invalid TENYEAR.FUS2"
+
+  - id: bund
+    asset_class: bond
+    product: futures_cfd
+    epic: IR.D.FGBL.FWM2.IP
+    yahoo: "EUN6.DE"
+    status: confirmed
+    point_value: 2.0
+    spread_bps: 1.7          # 2 pts @ ~12077
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Bund (€2); Yahoo ETF proxy"
+
+  - id: gilt
+    asset_class: bond
+    product: futures_cfd
+    epic: IR.D.FLG.FWM1.IP
+    yahoo: "IGLT.L"
+    status: confirmed
+    point_value: 2.0
+    spread_bps: 2.0
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Long Gilt (£2); Yahoo IGLT.L proxy"
+
+  # --- FX (cash CFD only — no futures-CFD FX on IG demo) ---
+  - id: eurusd
+    asset_class: fx
+    product: cash_cfd
+    epic: CS.D.EURUSD.MINI.IP
+    yahoo: "EURUSD=X"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 9.7          # live ~0.00112 on ~1.15
+    financing_bps_per_day: 0.5
+    roll_every_bars: 0
+    notes: "Cash MINI; tom-next stub 0.5bps/day"
+
+  - id: gbpusd
+    asset_class: fx
+    product: cash_cfd
+    epic: CS.D.GBPUSD.MINI.IP
+    yahoo: "GBPUSD=X"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 12.5         # live ~0.00169
+    financing_bps_per_day: 0.5
+    roll_every_bars: 0
+    notes: ""
+
+  - id: usdjpy
+    asset_class: fx
+    product: cash_cfd
+    epic: CS.D.USDJPY.MINI.IP
+    yahoo: "USDJPY=X"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 10.0
+    financing_bps_per_day: 0.5
+    roll_every_bars: 0
+    notes: ""
+
+  - id: audusd
+    asset_class: fx
+    product: cash_cfd
+    epic: CS.D.AUDUSD.MINI.IP
+    yahoo: "AUDUSD=X"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 10.0
+    financing_bps_per_day: 0.5
+    roll_every_bars: 0
+    notes: ""
+
+  - id: eurgbp
+    asset_class: fx
+    product: cash_cfd
+    epic: CS.D.EURGBP.MINI.IP
+    yahoo: "EURGBP=X"
+    status: confirmed
+    point_value: 1.0
+    spread_bps: 12.0
+    financing_bps_per_day: 0.5
+    roll_every_bars: 0
+    notes: ""
+
+  # --- Commodities (futures CFD) — point values differ from cash; use fut ---
+  - id: gold
+    asset_class: commodity
+    product: futures_cfd
+    epic: MT.D.GC.FWM3.IP
+    yahoo: "GC=F"
+    status: confirmed
+    point_value: 33.2        # fut mini; cash spot was $100/pt — NOT equal
+    spread_bps: 2.3          # published 0.6 pts @ ~2650
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Fut $33.20/pt ≠ cash $100 — live sizing must use fut point_value"
+
+  - id: silver
+    asset_class: commodity
+    product: futures_cfd
+    epic: MT.D.SI.FWM1.IP
+    yahoo: "SI=F"
+    status: confirmed
+    point_value: 10.0
+    spread_bps: 4.0
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "Silver ($10) mini futures"
+
+  - id: brent
+    asset_class: commodity
+    product: futures_cfd
+    epic: EN.D.LCO.FWM5.IP
+    yahoo: "BZ=F"
+    status: confirmed
+    point_value: 5.0         # fut mini $5; cash was $10 — NOT equal
+    spread_bps: 8.7          # 9 pts @ ~10400 (cent quote)
+    financing_bps_per_day: 0
+    roll_every_bars: 21      # ~monthly oil
+    notes: "Brent mini; more frequent rolls"
+
+  - id: wti
+    asset_class: commodity
+    product: futures_cfd
+    epic: EN.D.CL.FWM2.IP
+    yahoo: "CL=F"
+    status: confirmed
+    point_value: 5.0
+    spread_bps: 8.0          # published ~6 pts; stub
+    financing_bps_per_day: 0
+    roll_every_bars: 21
+    notes: "WTI mini $5; cash UNC was $10"
+
+  - id: copper
+    asset_class: commodity
+    product: futures_cfd
+    epic: MT.D.HG.FWM2.IP
+    yahoo: "HG=F"
+    status: confirmed
+    point_value: 0.5
+    spread_bps: 5.0
+    financing_bps_per_day: 0
+    roll_every_bars: 63
+    notes: "HG Copper ($0.50) mini"
